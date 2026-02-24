@@ -1,0 +1,65 @@
+# ============================================================
+# Collector Deployment (Step 1)
+# Queries Prometheus, Loki, Tempo from on-demand-observability
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-collector
+  namespace: devops-agent
+  labels:
+    app: devops-collector
+    component: collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: devops-collector
+  template:
+    metadata:
+      labels:
+        app: devops-collector
+        component: collector
+    spec:
+      serviceAccountName: devops-collector
+      containers:
+        - name: collector
+          image: devops-agent/collector:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: REDIS_HOST
+              value: redis.devops-agent.svc.cluster.local
+            - name: REDIS_PORT
+              value: "6379"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: devops-secrets
+                  key: REDIS_PASSWORD
+            - name: PROMETHEUS_URL
+              value: http://prometheus.on-demand-observability.svc.cluster.local:9090
+            - name: LOKI_URL
+              value: http://loki.on-demand-observability.svc.cluster.local:3100
+            - name: TEMPO_URL
+              value: http://tempo.on-demand-observability.svc.cluster.local:3200
+            - name: VICTORIA_METRICS_URL
+              value: http://victoriametrics.devops-agent.svc.cluster.local:8428
+            - name: TARGET_NAMESPACE
+              value: on-demand-observability
+            - name: METRICS_INTERVAL
+              value: "15"
+            - name: LOGS_INTERVAL
+              value: "10"
+            - name: TRACES_INTERVAL
+              value: "20"
+            - name: TSDB_TRENDS_INTERVAL
+              value: "60"
+            - name: LOG_LEVEL
+              value: INFO
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

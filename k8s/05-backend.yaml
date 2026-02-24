@@ -1,0 +1,91 @@
+# ============================================================
+# Backend Deployment (Step 3)
+# FastAPI — consumes Redis streams, stores in PostgreSQL
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-backend
+  namespace: devops-agent
+  labels:
+    app: devops-backend
+    component: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: devops-backend
+  template:
+    metadata:
+      labels:
+        app: devops-backend
+        component: backend
+    spec:
+      containers:
+        - name: backend
+          image: devops-agent/backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: REDIS_HOST
+              value: redis.devops-agent.svc.cluster.local
+            - name: REDIS_PORT
+              value: "6379"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: devops-secrets
+                  key: REDIS_PASSWORD
+            - name: POSTGRES_HOST
+              value: postgres.devops-agent.svc.cluster.local
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              value: devops_agent
+            - name: POSTGRES_USER
+              value: devops
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: devops-secrets
+                  key: POSTGRES_PASSWORD
+            - name: RETENTION_DAYS
+              value: "7"
+            - name: LOG_LEVEL
+              value: INFO
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: devops-backend
+  namespace: devops-agent
+  labels:
+    app: devops-backend
+spec:
+  selector:
+    app: devops-backend
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
