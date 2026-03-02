@@ -1,6 +1,10 @@
 # AI DevOps Agent for TraceFlix
 
-An AI-powered observability agent that integrates with the existing TraceFlix Kubernetes microservices platform. It collects real-time telemetry from Prometheus, Loki, and Tempo, streams it through a Redis pub-sub layer, stores it in PostgreSQL, and uses Claude API to produce actionable analysis. A dedicated **VictoriaMetrics TSDB** provides long-range metric storage with automatic downsampling, enabling trend analysis, memory leak detection, and capacity forecasting over 1-hour to 24-hour windows.
+An AI-powered observability agent that integrates with the existing TraceFlix Kubernetes microservices platform. It collects real-time telemetry from Prometheus, Loki, and Tempo, streams it through a Redis pub-sub layer, stores it in PostgreSQL, and produces actionable analysis. A dedicated **VictoriaMetrics TSDB** provides long-range metric storage with automatic downsampling, enabling trend analysis, memory leak detection, and capacity forecasting over 1-hour to 24-hour windows.
+
+**Dual Analyzer Mode:** The agent supports two analysis backends:
+- **Claude API** — sends structured context to Claude Sonnet for LLM-based analysis (default)
+- **ML Pipeline** — uses locally-trained models (Isolation Forest, LSTM Autoencoder, LSTM Forecaster, XGBoost, Sentence-BERT + HDBSCAN, Phi-3-mini) for fully offline analysis — no API dependency, designed for PhD research evaluation
 
 ## Architecture
 
@@ -68,10 +72,21 @@ An AI-powered observability agent that integrates with the existing TraceFlix Ku
 │  ┌─────────────────────────────────────────┐     STEP 4: AI Agent       │
 │  │  AI Agent (Deployment)                  │     Analysis + Insights    │
 │  │  - Queries backend for telemetry        │                             │
-│  │  - Fetches TSDB trend summary  ← NEW   │                             │
+│  │  - Fetches TSDB trend summary           │                             │
 │  │  - Builds structured context            │                             │
-│  │  - Sends to Claude API (Sonnet)         │                             │
+│  │  - ANALYZER_MODE=claude → Claude API    │                             │
+│  │  - ANALYZER_MODE=ml → ML Model Server   │                             │
 │  │  - Stores analysis results              │                             │
+│  └──────────────┬──────────────────────────┘                             │
+│                  │ (when ANALYZER_MODE=ml)                                │
+│                  ▼                                                        │
+│  ┌─────────────────────────────────────────┐     STEP 4b: ML Server    │
+│  │  ML Model Server (Deployment, GPU)      │     Local Inference       │
+│  │  - Anomaly: IF + LSTM Autoencoder       │                             │
+│  │  - Forecast: LSTM + Attention           │                             │
+│  │  - Root Cause: XGBoost                  │                             │
+│  │  - Log Clustering: SBERT + HDBSCAN      │                             │
+│  │  - NLP Report: Phi-3-mini (4-bit)       │                             │
 │  └─────────────────────────────────────────┘                             │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
@@ -83,7 +98,8 @@ These must be running in your cluster before deploying the agent:
 - Kubernetes 1.26+ (minikube works)
 - The **on-demand-observability** namespace deployed (from `on-demand-observability.yaml`)
 - TraceFlix services running (movie-service, actor-service, review-service)
-- An Anthropic API key for Claude access
+- For Claude mode: An Anthropic API key
+- For ML mode: NVIDIA GPU with 8GB+ VRAM (RTX 3060 or better), trained models in `ml-models/trained_models/`
 
 ## Quick Start
 
@@ -96,12 +112,16 @@ docker build -t devops-agent/backend:latest    ./backend
 docker build -t devops-agent/agent:latest      ./agent
 docker build -t devops-agent/dashboard:latest  ./dashboard
 
+# Optional: ML model server (only if using ANALYZER_MODE=ml)
+docker build -t devops-agent/ml-server:latest -f ml-models/serving/Dockerfile ./ml-models
+
 # If using minikube, build inside the minikube Docker daemon:
 eval $(minikube docker-env)
 docker build -t devops-agent/collector:latest  ./collector
 docker build -t devops-agent/backend:latest    ./backend
 docker build -t devops-agent/agent:latest      ./agent
 docker build -t devops-agent/dashboard:latest  ./dashboard
+# docker build -t devops-agent/ml-server:latest -f ml-models/serving/Dockerfile ./ml-models
 ```
 
 ### 2. Create Secrets
@@ -109,6 +129,7 @@ docker build -t devops-agent/dashboard:latest  ./dashboard
 ```bash
 kubectl apply -f k8s/01-namespace-rbac.yaml
 
+# ANTHROPIC_API_KEY is only required when using ANALYZER_MODE=claude
 kubectl create secret generic devops-secrets \
   --namespace devops-agent \
   --from-literal=ANTHROPIC_API_KEY=sk-ant-api03-your-key \
@@ -137,6 +158,11 @@ kubectl apply -f k8s/04-collector.yaml
 kubectl apply -f k8s/05-backend.yaml
 kubectl apply -f k8s/06-agent.yaml
 kubectl apply -f k8s/07-dashboard.yaml
+
+# Optional: Deploy ML model server (only if using ANALYZER_MODE=ml)
+# kubectl apply -f k8s/08-ml-server.yaml
+# Then switch agent to ML mode:
+# kubectl set env deploy/devops-ai-agent -n devops-agent ANALYZER_MODE=ml
 ```
 
 ### 4. Verify Deployment
@@ -152,6 +178,7 @@ kubectl get pods -n devops-agent
 # postgres-0               1/1  Running
 # redis-0                  1/1  Running
 # victoriametrics-0        1/1  Running
+# devops-ml-server-xxx     1/1  Running   (only if ML mode deployed)
 
 # Check collector logs (should show VM trend queries)
 kubectl logs -f deploy/devops-collector -n devops-agent
@@ -208,6 +235,60 @@ curl "http://localhost:8000/api/tsdb/trends?query_name=latency_p99_1h&since_hour
 curl http://localhost:8000/api/tsdb/trends/latest
 ```
 
+## ML Pipeline (Alternative to Claude API)
+
+The `ml-models/` directory contains a complete hybrid ML pipeline that can replace the Claude API for analysis. See `ml-models/README.md` for full documentation.
+
+### Quick Start — ML Mode
+
+```bash
+# 1. Install Python dependencies
+cd ml-models
+pip install -r requirements.txt
+
+# 2. Generate training data + train all models (~25 min on RTX 3060)
+python -m pipeline.train_all
+
+# 3. Start ML model server locally
+python -m serving.model_server
+# Server runs on port 8001 — test with: curl http://localhost:8001/health
+
+# 4. Switch agent to ML mode
+export ANALYZER_MODE=ml
+export ML_SERVER_URL=http://localhost:8001
+```
+
+### Deploy ML Server in Kubernetes
+
+```bash
+# Build ML server image
+eval $(minikube docker-env)
+docker build -t devops-agent/ml-server:latest -f ml-models/serving/Dockerfile ./ml-models
+
+# Deploy
+kubectl apply -f k8s/08-ml-server.yaml
+
+# Copy trained models to PVC
+kubectl cp ml-models/trained_models/ devops-agent/devops-ml-server-xxx:/app/trained_models/
+
+# Switch agent to ML mode
+kubectl set env deploy/devops-ai-agent -n devops-agent ANALYZER_MODE=ml
+```
+
+### ML Models Summary
+
+| Model | Task | Architecture | VRAM |
+|-------|------|-------------|------|
+| Anomaly Detector | Detect metric anomalies | Isolation Forest + LSTM Autoencoder | ~100MB |
+| Forecaster | Predict future metrics | LSTM + Multi-head Attention | ~200MB |
+| Root Cause Classifier | Identify causes | XGBoost (gradient boosted trees) | CPU only |
+| Log Clusterer | Group log patterns | Sentence-BERT + UMAP + HDBSCAN | ~400MB |
+| Report Generator | Natural language synthesis | Phi-3-mini-4k (4-bit NF4) | ~3.5GB |
+
+### Research Notebook
+
+A Jupyter notebook for training, evaluation, and benchmarking is at `ml-models/notebooks/research_training.ipynb`. It includes per-model metrics, confusion matrices, latency benchmarks, cost analysis, and statistical significance testing (paired t-test, Wilcoxon, bootstrap CIs).
+
 ## API Reference
 
 | Method | Endpoint | Description |
@@ -254,6 +335,9 @@ All services are configured via environment variables. Key settings:
 | `LOOKBACK_MINUTES` | 30 | How far back each analysis looks |
 | `RETENTION_DAYS` | 7 | Data retention in PostgreSQL |
 | `CLAUDE_MODEL` | claude-sonnet-4-20250514 | Claude model for analysis |
+| `ANALYZER_MODE` | claude | Analysis backend: `claude` or `ml` |
+| `ML_SERVER_URL` | http://devops-ml-server...:8001 | ML model server endpoint (when mode=ml) |
+| `ML_TIMEOUT` | 30 | ML server request timeout in seconds |
 | `RUN_MODE` | continuous | Agent mode: `continuous` or `once` |
 | `VICTORIA_METRICS_URL` | http://victoriametrics....:8428 | VictoriaMetrics query endpoint |
 
@@ -268,7 +352,7 @@ VictoriaMetrics-specific settings are configured via container args in `03a-vict
 
 ## What the AI Agent Analyzes
 
-The Claude-powered agent provides structured JSON analysis covering seven areas specific to the TraceFlix architecture:
+The agent (in either Claude API or ML mode) provides structured JSON analysis covering seven areas specific to the TraceFlix architecture:
 
 1. **Health Status** — overall cluster health (HEALTHY / DEGRADED / CRITICAL)
 2. **Anomaly Detection** — error spikes, latency degradation, resource exhaustion

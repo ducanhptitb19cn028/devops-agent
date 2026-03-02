@@ -29,7 +29,10 @@ spec:
             - name: POSTGRES_DB
               value: devops_agent
             - name: POSTGRES_USER
-              value: devops
+              valueFrom:
+                secretKeyRef:
+                  name: devops-secrets
+                  key: POSTGRES_USER
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -46,12 +49,12 @@ spec:
               memory: 512Mi
           livenessProbe:
             exec:
-              command: ["pg_isready", "-U", "devops", "-d", "devops_agent"]
+              command: ["pg_isready", "-U", "postgres", "-d", "devops_agent"]
             initialDelaySeconds: 15
             periodSeconds: 10
           readinessProbe:
             exec:
-              command: ["pg_isready", "-U", "devops", "-d", "devops_agent"]
+              command: ["pg_isready", "-U", "postgres", "-d", "devops_agent"]
             initialDelaySeconds: 5
             periodSeconds: 5
           volumeMounts:

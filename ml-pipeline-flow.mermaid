@@ -1,0 +1,57 @@
+graph LR
+    subgraph Input["Telemetry Input"]
+        M[Metrics<br/>8 features × N steps]
+        L[Logs<br/>raw messages]
+    end
+
+    subgraph Specialised["Specialised ML Models"]
+        direction TB
+        subgraph MetricModels["Metric Analysis"]
+            AD["🔍 Anomaly Detector<br/>IF + LSTM-AE<br/>~10ms / ~100MB"]
+            FC["📈 Forecaster<br/>LSTM + Attention<br/>~15ms / ~200MB"]
+            RC["🎯 Root Cause<br/>XGBoost<br/>~2ms / CPU"]
+        end
+        subgraph LogModel["Log Analysis"]
+            LC["📋 Log Clusterer<br/>SBERT + HDBSCAN<br/>~50ms / ~400MB"]
+        end
+    end
+
+    subgraph Outputs["Structured Outputs"]
+        AO[anomaly_score<br/>is_anomaly<br/>if_score + lstm_score]
+        FO[forecasts<br/>confidence_intervals<br/>breach_alerts]
+        RO[predicted_cause<br/>top_causes<br/>feature_importance]
+        LO[cluster_id<br/>pattern_label<br/>is_new_pattern]
+    end
+
+    subgraph NLP["NLP Synthesis"]
+        PHI["🤖 Phi-3-mini 4-bit<br/>~3s / ~3.5GB VRAM"]
+        FB[Rule-based<br/>Fallback]
+    end
+
+    subgraph Report["JSON Report"]
+        R["health_status<br/>confidence<br/>summary<br/>anomalies[]<br/>root_causes[]<br/>recommendations[]<br/>incident_timeline[]"]
+    end
+
+    M --> AD & FC
+    AD -->|"is_anomaly?"| RC
+    M --> RC
+    L --> LC
+
+    AD --> AO
+    FC --> FO
+    RC --> RO
+    LC --> LO
+
+    AO & FO & RO & LO --> PHI
+    PHI -->|"valid JSON?"| R
+    PHI -->|"invalid"| FB --> R
+
+    R --> DASH[Dashboard]
+    R --> AGENT[Agent]
+
+    style AD fill:#E74C3C,color:#fff
+    style FC fill:#3498DB,color:#fff
+    style RC fill:#2ECC71,color:#fff
+    style LC fill:#9B59B6,color:#fff
+    style PHI fill:#F39C12,color:#fff
+    style R fill:#1ABC9C,color:#fff

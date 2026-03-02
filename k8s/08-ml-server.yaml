@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-ml-server
+  namespace: devops-agent
+  labels:
+    app: devops-ml-server
+    component: ml-inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: devops-ml-server
+  template:
+    metadata:
+      labels:
+        app: devops-ml-server
+        component: ml-inference
+    spec:
+      containers:
+        - name: ml-server
+          image: devops-agent/ml-server:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8001
+              name: http
+          env:
+            - name: ML_SERVER_PORT
+              value: "8001"
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "all"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "4Gi"
+              # nvidia.com/gpu: "1"       # uncomment if GPU operator is installed
+            limits:
+              cpu: "2"
+              memory: "8Gi"
+              # nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: model-storage
+              mountPath: /app/trained_models
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60       # models take time to load
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: ml-model-storage
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ml-model-storage
+  namespace: devops-agent
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: devops-ml-server
+  namespace: devops-agent
+  labels:
+    app: devops-ml-server
+spec:
+  selector:
+    app: devops-ml-server
+  ports:
+    - port: 8001
+      targetPort: http
+      protocol: TCP
+      name: http
+  type: ClusterIP

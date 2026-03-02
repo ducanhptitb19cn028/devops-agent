@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.so
+venv/
+.venv/
+env/
+
+# ML Models — trained artifacts (large, regenerable)
+ml-models/trained_models/
+ml-models/data/*.parquet
+ml-models/data/real/
+ml-models/artifacts/
+ml-models/logs/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_metadata
+
+# MLflow
+mlruns/
+
+# Node
+node_modules/
+dashboard/build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Docker
+*.tar
+*.tar.gz
+
+# K8s secrets (never commit)
+k8s/00-secrets.yaml
+
+# Secrets & credentials — any file that may contain passwords
+.env
+.env.*
+*.env
+!*.env.example
+secrets.yaml
+secrets.yml
+*-secrets.yaml
+*-secrets.yml
+*secret*.yaml
+*secret*.yml
+*.credentials
+*.creds
+kubeconfig
+kubeconfig.*
+
+# Claude Code session data
+.claude/
+
+# Markdown docs (all except README.md)
+*.md
+!README.md

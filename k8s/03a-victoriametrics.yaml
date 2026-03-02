@@ -33,9 +33,6 @@ spec:
             - "--storageDataPath=/victoria-metrics-data"
             # Accept Prometheus remote_write
             - "--httpListenAddr=:8428"
-            # Enable downsampling: after 7d keep 5m resolution,
-            # after 30d keep 1h resolution
-            - "--downsampling.period=7d:5m,30d:1h"
             # Deduplication window for HA Prometheus setups
             - "--dedup.minScrapeInterval=15s"
             # Memory limits for merge operations

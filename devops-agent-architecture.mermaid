@@ -1,0 +1,88 @@
+graph TB
+    subgraph TraceFlix["TraceFlix Microservices (K8s Namespace: on-demand-observability)"]
+        MS[movie-service<br/>Spring Boot + OTel]
+        AS[actor-service<br/>Spring Boot + OTel]
+        RS[review-service<br/>Spring Boot + OTel]
+        MS -->|REST| AS
+        MS -->|REST| RS
+    end
+
+    subgraph Observability["Observability Stack"]
+        OC[OTel Collector]
+        Tempo[Tempo<br/>Traces]
+        Prom[Prometheus<br/>Metrics]
+        Loki[Loki<br/>Logs]
+        Grafana[Grafana<br/>Dashboards]
+        VM[VictoriaMetrics<br/>TSDB 30d retention]
+    end
+
+    MS & AS & RS -->|OTLP| OC
+    OC --> Tempo
+    OC --> Prom
+    OC --> Loki
+    Prom -->|remote_write| VM
+    Tempo & Prom & Loki --> Grafana
+
+    subgraph Agent["DevOps AI Agent (K8s Namespace: devops-agent)"]
+        direction TB
+
+        subgraph Layer1["Layer 1 — Data Collection"]
+            COL[Collector<br/>Python CronJob]
+            COL -->|Query| Prom
+            COL -->|Query| Loki
+            COL -->|Query| Tempo
+            COL -->|Query| VM
+        end
+
+        subgraph Layer2["Layer 2 — Pub/Sub"]
+            Redis[(Redis Streams<br/>5 channels)]
+        end
+        COL -->|Publish| Redis
+
+        subgraph Layer3["Layer 3 — Processing & Storage"]
+            BE[FastAPI Backend<br/>5 consumers]
+            PG[(PostgreSQL<br/>5 tables)]
+        end
+        Redis -->|Subscribe| BE
+        BE --> PG
+
+        subgraph Layer4["Layer 4 — AI Analysis"]
+            AG[Agent Orchestrator<br/>ANALYZER_MODE env]
+            AG -->|"mode=claude"| Claude[Claude API<br/>claude-sonnet-4]
+            AG -->|"mode=ml"| MLS[ML Model Server<br/>FastAPI :8001]
+        end
+        BE -->|GET /api/*| AG
+        AG -->|POST /api/analysis| BE
+
+        subgraph MLPipeline["ML Pipeline (GPU)"]
+            direction LR
+            AD[Isolation Forest<br/>+ LSTM-AE<br/>Anomaly Detection]
+            FC[LSTM + Attention<br/>Forecasting]
+            RC[XGBoost<br/>Root Cause]
+            LC[Sentence-BERT<br/>+ HDBSCAN<br/>Log Clustering]
+            NLP[Phi-3-mini 4-bit<br/>Report Generator]
+            AD & FC & RC & LC --> NLP
+        end
+        MLS --- MLPipeline
+
+        subgraph Layer5["Layer 5 — Visualisation"]
+            DASH[React Dashboard<br/>WebSocket + nginx]
+        end
+        BE -->|WebSocket| DASH
+    end
+
+    User((User)) -->|:3000| DASH
+
+    classDef traceFlix fill:#4A90D9,stroke:#2C5F99,color:#fff
+    classDef obs fill:#50B748,stroke:#357A2E,color:#fff
+    classDef agent fill:#E8A838,stroke:#B07A1A,color:#fff
+    classDef ml fill:#D94A6B,stroke:#A03050,color:#fff
+    classDef storage fill:#7B68EE,stroke:#5A4CC0,color:#fff
+    classDef external fill:#888,stroke:#555,color:#fff
+
+    class MS,AS,RS traceFlix
+    class OC,Tempo,Prom,Loki,Grafana,VM obs
+    class COL,BE,AG,DASH agent
+    class AD,FC,RC,LC,NLP,MLS ml
+    class Redis,PG storage
+    class Claude,User external

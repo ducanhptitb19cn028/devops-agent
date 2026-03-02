@@ -4,8 +4,12 @@ Runs as a K8s CronJob or continuous Deployment.
 Workflow:
   1. Query backend API for recent logs, metrics, traces, events
   2. Build structured context from TraceFlix observability data
-  3. Send to Claude API for deep analysis
+  3. Send to Claude API or local ML model server for analysis
   4. Store analysis results back via backend POST /api/analysis
+
+Analyzer mode (set via ANALYZER_MODE env var):
+  - "claude": Uses Claude API (requires ANTHROPIC_API_KEY)
+  - "ml":     Uses local ML model server (requires ML_SERVER_URL)
 """
 
 import asyncio
@@ -27,6 +31,10 @@ ANALYSIS_INTERVAL = int(os.getenv("ANALYSIS_INTERVAL", "300"))
 RUN_MODE = os.getenv("RUN_MODE", "continuous")  # "continuous" or "once"
 LOOKBACK_MINUTES = int(os.getenv("LOOKBACK_MINUTES", "30"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# Analyzer mode: "claude" uses Claude API, "ml" uses local ML model server
+ANALYZER_MODE = os.getenv("ANALYZER_MODE", "claude")  # "claude" or "ml"
+ML_SERVER_URL = os.getenv("ML_SERVER_URL", "http://devops-ml-server.devops-agent.svc.cluster.local:8001")
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL), format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("ai-agent")
@@ -401,14 +409,27 @@ async def main():
     logger.info("=" * 60)
     logger.info("DevOps AI Agent — Intelligence Service starting")
     logger.info(f"  Backend:  {BACKEND_URL}")
-    logger.info(f"  Model:    {CLAUDE_MODEL}")
+    logger.info(f"  Analyzer: {ANALYZER_MODE.upper()}")
+    if ANALYZER_MODE == "claude":
+        logger.info(f"  Model:    {CLAUDE_MODEL}")
+    else:
+        logger.info(f"  ML Server: {ML_SERVER_URL}")
     logger.info(f"  Mode:     {RUN_MODE}")
     logger.info(f"  Interval: {ANALYSIS_INTERVAL}s")
     logger.info(f"  Lookback: {LOOKBACK_MINUTES}min")
     logger.info("=" * 60)
 
     fetcher = DataFetcher()
-    analyzer = ClaudeAnalyzer()
+
+    # Select analyzer based on mode
+    if ANALYZER_MODE == "ml":
+        from ml_analyzer import MLAsyncAnalyzer
+        analyzer = MLAsyncAnalyzer()
+        logger.info("Using ML model server for analysis")
+    else:
+        analyzer = ClaudeAnalyzer()
+        logger.info("Using Claude API for analysis")
+
     await fetcher.init()
     await analyzer.init()
 

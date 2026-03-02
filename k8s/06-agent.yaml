@@ -1,6 +1,10 @@
 # ============================================================
 # AI Agent Deployment (Step 4)
-# Queries backend, sends to Claude API, stores analysis
+# Queries backend, sends to Claude API or ML model server, stores analysis
+#
+# ANALYZER_MODE:
+#   "claude" — Uses Claude API (default, requires ANTHROPIC_API_KEY)
+#   "ml"     — Uses local ML model server (requires 08-ml-server.yaml deployed)
 # ============================================================
 apiVersion: apps/v1
 kind: Deployment
@@ -28,13 +32,29 @@ spec:
           env:
             - name: BACKEND_URL
               value: http://devops-backend.devops-agent.svc.cluster.local:8000
+
+            # ── Analyzer mode ─────────────────────────────────
+            # Set to "ml" to use local ML models instead of Claude API
+            - name: ANALYZER_MODE
+              value: "claude"            # change to "ml" for ML mode
+
+            # ── Claude API settings (used when ANALYZER_MODE=claude) ──
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: devops-secrets
                   key: ANTHROPIC_API_KEY
+                  optional: true         # not required when using ML mode
             - name: CLAUDE_MODEL
               value: claude-sonnet-4-20250514
+
+            # ── ML server settings (used when ANALYZER_MODE=ml) ──
+            - name: ML_SERVER_URL
+              value: http://devops-ml-server.devops-agent.svc.cluster.local:8001
+            - name: ML_TIMEOUT
+              value: "30"
+
+            # ── General settings ──────────────────────────────
             - name: ANALYSIS_INTERVAL
               value: "300"
             - name: LOOKBACK_MINUTES
@@ -77,10 +97,9 @@ spec:
 #               env:
 #                 - name: BACKEND_URL
 #                   value: http://devops-backend.devops-agent.svc.cluster.local:8000
-#                 - name: ANTHROPIC_API_KEY
-#                   valueFrom:
-#                     secretKeyRef:
-#                       name: devops-secrets
-#                       key: ANTHROPIC_API_KEY
+#                 - name: ANALYZER_MODE
+#                   value: "ml"
+#                 - name: ML_SERVER_URL
+#                   value: http://devops-ml-server.devops-agent.svc.cluster.local:8001
 #                 - name: RUN_MODE
 #                   value: once

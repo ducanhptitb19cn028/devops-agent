@@ -1,0 +1,67 @@
+graph TB
+    subgraph DataGen["Data Generation"]
+        MG["Metric Generator<br/>7 anomaly types × 3 services<br/>4500 windows"]
+        LG["Log Generator<br/>20000 logs<br/>severity + cluster labels"]
+    end
+
+    subgraph Split["Data Split (70/15/15)"]
+        TR[Training Set]
+        VA[Validation Set]
+        TE[Test Set]
+    end
+
+    DataGen --> Split
+
+    subgraph Training["Model Training (~25 min on RTX 3060)"]
+        T1["Anomaly Detector<br/>IF fit + LSTM-AE 100 epochs<br/>early stopping, patience=15"]
+        T2["Forecaster<br/>LSTM+Attn 150 epochs<br/>ReduceLR, patience=20"]
+        T3["Root Cause Classifier<br/>XGBoost 300 trees<br/>SMOTE + 5-fold CV"]
+        T4["Log Clusterer<br/>SBERT encode → UMAP → HDBSCAN<br/>pattern extraction"]
+    end
+
+    TR --> T1 & T2 & T3 & T4
+    VA --> T1 & T2 & T3 & T4
+
+    subgraph Evaluation["Evaluation Framework"]
+        subgraph PerModel["Per-Model Metrics"]
+            E1["Anomaly: P/R/F1<br/>AUC-ROC, FPR"]
+            E2["Forecast: MAE/RMSE<br/>MAPE, Directional Acc"]
+            E3["Root Cause: Acc/F1<br/>Top-k, per-class"]
+            E4["Clustering: Silhouette<br/>ARI, NMI, V-measure"]
+        end
+        subgraph System["System-Level"]
+            LAT["Latency Benchmark<br/>warmup + n_runs<br/>P50/P95/P99"]
+            COST["Cost Analysis<br/>GPU amortisation<br/>vs API token spend"]
+        end
+        subgraph Stats["Statistical Tests"]
+            PT["Paired t-test"]
+            WX["Wilcoxon signed-rank"]
+            BS["Bootstrap CI<br/>10000 resamples"]
+        end
+    end
+
+    TE --> E1 & E2 & E3 & E4
+    T1 & T2 & T3 & T4 --> LAT
+    LAT & COST --> Stats
+
+    subgraph Comparison["ML vs Claude API"]
+        HH["Head-to-Head<br/>Same test scenarios"]
+        AB["Ablation Study<br/>Ensemble vs individual"]
+        PUB["Publication-Ready<br/>Metrics tables"]
+    end
+
+    Evaluation --> Comparison
+
+    subgraph Artifacts["Saved Artifacts"]
+        MOD["trained_models/<br/>model weights + scalers"]
+        RES["artifacts/<br/>results JSON + report"]
+    end
+
+    Training --> MOD
+    Evaluation --> RES
+
+    style DataGen fill:#3498DB,color:#fff
+    style Training fill:#E74C3C,color:#fff
+    style Evaluation fill:#2ECC71,color:#fff
+    style Comparison fill:#F39C12,color:#fff
+    style Artifacts fill:#9B59B6,color:#fff
