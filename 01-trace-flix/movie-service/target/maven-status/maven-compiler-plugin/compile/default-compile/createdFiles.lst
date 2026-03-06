@@ -1,0 +1,13 @@
+com\vinsguru\movie\dto\ReviewDto.class
+com\vinsguru\movie\config\ApplicationConfiguration.class
+com\vinsguru\movie\MovieServiceApplication.class
+com\vinsguru\movie\controller\MovieController.class
+com\vinsguru\movie\dto\MovieDto.class
+com\vinsguru\movie\client\ReviewClient.class
+com\vinsguru\movie\mapper\EntityDtoMapper.class
+com\vinsguru\movie\entity\Movie.class
+com\vinsguru\movie\dto\ActorDto.class
+com\vinsguru\movie\client\ActorClient.class
+com\vinsguru\movie\client\ReviewClient$1.class
+com\vinsguru\movie\service\MovieService.class
+com\vinsguru\movie\repository\MovieRepository.class

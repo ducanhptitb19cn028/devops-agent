@@ -230,8 +230,8 @@ async def predict_log_cluster(data: LogBatch):
     )
 
 
-@app.post("/analyse")
-async def full_analysis(data: AnalyseRequest):
+@app.post("/analyse", response_model=None)
+async def full_analysis(data: AnalyseRequest) -> Dict[str, Any]:
     """
     Run the full ML pipeline and generate an analysis report.
     This is the drop-in replacement for the Claude API call.

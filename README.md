@@ -136,6 +136,12 @@ kubectl create secret generic devops-secrets \
   --from-literal=POSTGRES_PASSWORD=strong-db-password \
   --from-literal=REDIS_PASSWORD=strong-redis-password
 ```
+<!-- kubectl create secret generic devops-secrets \
+    --namespace devops-agent \
+    --from-literal=REDIS_PASSWORD=ducanh0312 \
+    --from-literal=POSTGRES_PASSWORD=ducanh0312 \
+    --from-literal=POSTGRES_USER=postgres \
+    --from-literal=ANTHROPIC_API_KEY=sk-ant-... -->
 
 ### 3. Deploy All Components
 
@@ -378,3 +384,13 @@ The collector runs the following PromQL range queries against VictoriaMetrics ev
 | `latency_p99_24h` | 24 hours | Full-day latency baseline |
 
 Each series is analysed for direction (increasing / stable / decreasing), percentage change between first and second half of the window, and volatility (coefficient of variation). The `/api/tsdb/trends/summary` endpoint categorises all series into degrading (trend_pct > 10%), stable, or improving, which the AI agent uses to prioritise its analysis.
+
+ Run these three commands in order:                                                                                                                               
+  # 1. Build the ML server image                                                                                                                                
+  make build-ml
+
+  # 2. Load it into the k8s node's containerd (bypasses Docker Hub)
+  docker save devops-agent/ml-server:latest | docker exec -i desktop-control-plane ctr images import -
+
+  # 3. Force a new pod so it picks up the now-local image
+  kubectl delete pod -l app=devops-ml-server -n devops-agent

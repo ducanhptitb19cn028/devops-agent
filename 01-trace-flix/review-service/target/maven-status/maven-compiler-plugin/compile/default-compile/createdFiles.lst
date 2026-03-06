@@ -1,0 +1,7 @@
+com\vinsguru\review\service\ReviewService.class
+com\vinsguru\review\dto\ReviewDto.class
+com\vinsguru\review\controller\ReviewController.class
+com\vinsguru\review\repository\ReviewRepository.class
+com\vinsguru\review\entity\Review.class
+com\vinsguru\review\ReviewServiceApplication.class
+com\vinsguru\review\mapper\EntityDtoMapper.class

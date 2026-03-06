@@ -45,7 +45,10 @@ spec:
             - name: POSTGRES_DB
               value: devops_agent
             - name: POSTGRES_USER
-              value: devops
+              valueFrom:
+                secretKeyRef:
+                  name: devops-secrets
+                  key: POSTGRES_USER
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:

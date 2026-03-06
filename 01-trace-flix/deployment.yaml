@@ -1,0 +1,480 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sampling-strategies-head
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: movie-service
+  namespace: sampling-strategies-head
+  labels:
+    app: movie-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: movie-service
+  template:
+    metadata:
+      labels:
+        app: movie-service
+    spec:
+      volumes:
+        - name: otel-agent
+          emptyDir: {}
+        - name: otel-config
+          configMap:
+            name: otel-agent-config
+            items:
+              - key: opentelemetry-config.properties
+                path: opentelemetry-config.properties
+      initContainers:
+        - name: download-otel-agent
+          image: curlimages/curl:latest
+          command: ["sh", "-c"]
+          args:
+            - >
+              curl -L -o /otel/opentelemetry-javaagent.jar
+              https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/latest/download/opentelemetry-javaagent.jar
+          volumeMounts:
+            - name: otel-agent
+              mountPath: /otel
+      containers:
+        - name: movie-service
+          image: vinsguru/movie-service
+          ports:
+            - containerPort: 8080
+          env:
+            - name: ACTOR_SERVICE_URL
+              value: "http://actor-service:8080/api/actors/"
+            - name: REVIEW_SERVICE_URL
+              value: "http://review-service:8080/api/reviews"
+          command: ["java"]
+          args:
+            - "-javaagent:/otel/opentelemetry-javaagent.jar"
+            - "-Dotel.javaagent.configuration-file=/otel-config/opentelemetry-config.properties"
+            - "-Dotel.service.name=movie-service"
+            - "-jar"
+            - "/app/app.jar"
+          volumeMounts:
+            - name: otel-agent
+              mountPath: /otel
+            - name: otel-config
+              mountPath: /otel-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: movie-service
+  namespace: sampling-strategies-head
+  labels:
+    app: movie-service
+spec:
+  selector:
+    app: movie-service
+  type: NodePort
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actor-service
+  namespace: sampling-strategies-head
+  labels:
+    app: actor-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: actor-service
+  template:
+    metadata:
+      labels:
+        app: actor-service
+    spec:
+      volumes:
+        - name: otel-agent
+          emptyDir: {}
+        - name: otel-config
+          configMap:
+            name: otel-agent-config
+            items:
+              - key: opentelemetry-config.properties
+                path: opentelemetry-config.properties
+      initContainers:
+        - name: download-otel-agent
+          image: curlimages/curl:latest
+          command: ["sh", "-c"]
+          args:
+            - >
+              curl -L -o /otel/opentelemetry-javaagent.jar
+              https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/latest/download/opentelemetry-javaagent.jar
+          volumeMounts:
+            - name: otel-agent
+              mountPath: /otel
+      containers:
+        - name: actor-service
+          image: vinsguru/actor-service
+          ports:
+            - containerPort: 8080
+          command: ["java"]
+          args:
+            - "-javaagent:/otel/opentelemetry-javaagent.jar"
+            - "-Dotel.javaagent.configuration-file=/otel-config/opentelemetry-config.properties"
+            - "-Dotel.service.name=actor-service"
+            - "-jar"
+            - "/app/app.jar"
+          volumeMounts:
+            - name: otel-agent
+              mountPath: /otel
+            - name: otel-config
+              mountPath: /otel-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: actor-service
+  namespace: sampling-strategies-head
+  labels:
+    app: actor-service
+spec:
+  selector:
+    app: actor-service
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: review-service
+  namespace: sampling-strategies-head
+  labels:
+    app: review-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: review-service
+  template:
+    metadata:
+      labels:
+        app: review-service
+    spec:
+      volumes:
+        - name: otel-agent
+          emptyDir: {}
+        - name: otel-config
+          configMap:
+            name: otel-agent-config
+            items:
+              - key: opentelemetry-config.properties
+                path: opentelemetry-config.properties
+      initContainers:
+        - name: download-otel-agent
+          image: curlimages/curl:latest
+          command: ["sh", "-c"]
+          args:
+            - >
+              curl -L -o /otel/opentelemetry-javaagent.jar
+              https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/latest/download/opentelemetry-javaagent.jar
+          volumeMounts:
+            - name: otel-agent
+              mountPath: /otel
+      containers:
+        - name: review-service
+          image: vinsguru/review-service
+          ports:
+            - containerPort: 8080
+          command: ["java"]
+          args:
+            - "-javaagent:/otel/opentelemetry-javaagent.jar"
+            - "-Dotel.javaagent.configuration-file=/otel-config/opentelemetry-config.properties"
+            - "-Dotel.service.name=review-service"
+            - "-jar"
+            - "/app/app.jar"
+          volumeMounts:
+            - name: otel-agent
+              mountPath: /otel
+            - name: otel-config
+              mountPath: /otel-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: review-service
+  namespace: sampling-strategies-head
+  labels:
+    app: review-service
+spec:
+  selector:
+    app: review-service
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: sampling-strategies-head
+  labels:
+    app: otel-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+    spec:
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.133.0
+          args: ["--config=/etc/otel/collector-config.yml"]
+          volumeMounts:
+            - name: collector-config
+              mountPath: /etc/otel/collector-config.yml
+              subPath: collector-config.yml
+      volumes:
+        - name: collector-config
+          configMap:
+            name: otel-collector-config
+            items:
+              - key: collector-config.yml
+                path: collector-config.yml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: sampling-strategies-head
+  labels:
+    app: otel-collector
+spec:
+  selector:
+    app: otel-collector
+  type: ClusterIP
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tempo
+  namespace: sampling-strategies-head
+  labels:
+    app: tempo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tempo
+  template:
+    metadata:
+      labels:
+        app: tempo
+    spec:
+      containers:
+        - name: tempo
+          image: grafana/tempo:2.8.2
+          args: ["-config.file=/etc/tempo.yaml"]
+          volumeMounts:
+            - name: tempo-config
+              mountPath: /etc/tempo.yaml
+              subPath: tempo.yaml
+      volumes:
+        - name: tempo-config
+          configMap:
+            name: tempo-config
+            items:
+              - key: tempo.yaml
+                path: tempo.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo
+  namespace: sampling-strategies-head
+  labels:
+    app: tempo
+spec:
+  selector:
+    app: tempo
+  type: ClusterIP
+  ports:
+    - name: tempo-http
+      port: 3200
+      targetPort: 3200
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: sampling-strategies-head
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:12.0
+          ports:
+            - containerPort: 3000
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: "admin"
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: "admin"
+          volumeMounts:
+            - name: grafana-datasources
+              mountPath: /etc/grafana/provisioning/datasources/datasource.yaml
+              subPath: grafana-datasources.yaml
+      volumes:
+        - name: grafana-datasources
+          configMap:
+            name: grafana-datasources
+            items:
+              - key: grafana-datasources.yaml
+                path: grafana-datasources.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: sampling-strategies-head
+  labels:
+    app: grafana
+spec:
+  selector:
+    app: grafana
+  type: NodePort
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 30300
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: sampling-strategies-head
+data:
+  collector-config.yml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: ":4317"
+          http:
+            endpoint: ":4318"
+
+    exporters:
+      otlp/tempo:
+        endpoint: "tempo:4317"
+        tls:
+          insecure: true
+
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          exporters: [otlp/tempo]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tempo-config
+  namespace: sampling-strategies-head
+data:
+  tempo.yaml: |
+    server:
+      http_listen_address: 0.0.0.0
+      http_listen_port: 3200
+
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: "tempo:4317"
+            http:
+              endpoint: "tempo:4318"
+
+    ingester:
+      trace_idle_period: 10s
+      max_block_bytes: 1048576
+      max_block_duration: 5m
+
+    compactor:
+      compaction:
+        block_retention: 1h
+
+    storage:
+      trace:
+        backend: local
+        local:
+          path: /tmp/tempo/traces
+        wal:
+          path: /tmp/tempo/wal
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: sampling-strategies-head
+data:
+  grafana-datasources.yaml: |
+    apiVersion: 1
+
+    datasources:
+      - name: tempo
+        uid: tempo_ds
+        type: tempo
+        access: proxy
+        url: http://tempo:3200
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-agent-config
+  namespace: sampling-strategies-head
+data:
+  opentelemetry-config.properties: |
+    otel.service.name=my-service-we-override-via-env-variable
+    otel.traces.exporter=otlp
+    otel.metrics.exporter=none
+    otel.logs.exporter=none
+    otel.exporter.otlp.protocol=grpc
+    otel.exporter.otlp.endpoint=http://otel-collector:4317
+
+    # demo-1
+    #otel.traces.sampler=always_on
+
+    # demo-2
+    #otel.traces.sampler=always_off
+
+    # demo-3
+    #otel.traces.sampler=traceidratio
+    #otel.traces.sampler.arg=0.2

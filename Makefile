@@ -19,13 +19,14 @@ SHELL := /bin/bash
 NAMESPACE := devops-agent
 MINIKUBE := $(shell where minikube 2>NUL)
 
+# Load credentials from .env (gitignored) — create .env from .env.example first run
+-include .env
+export
+
 # ── Help ─────────────────────────────────────────────────────
 .PHONY: help
 help: ## Show available commands
-	@echo "DevOps AI Agent — Make Targets"
-	@echo "──────────────────────────────────────────────"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@echo "DevOps AI Agent Make Targets"
 
 # ── Build ────────────────────────────────────────────────────
 .PHONY: build build-minikube build-ml
@@ -33,8 +34,16 @@ help: ## Show available commands
 load-infra-images: ## Pull and load infra images into Docker Desktop k8s node
 	docker pull redis:7.4-alpine
 	docker pull postgres:16-alpine
-	docker save redis:7.4-alpine    | docker exec -i desktop-control-plane ctr images import -
-	docker save postgres:16-alpine  | docker exec -i desktop-control-plane ctr images import -
+	docker save redis:7.4-alpine    -o redis.tar
+	docker cp redis.tar desktop-control-plane:/tmp/redis.tar
+	docker exec desktop-control-plane ctr images import /tmp/redis.tar
+	docker exec desktop-control-plane rm /tmp/redis.tar
+	rm -f redis.tar
+	docker save postgres:16-alpine  -o postgres.tar
+	docker cp postgres.tar desktop-control-plane:/tmp/postgres.tar
+	docker exec desktop-control-plane ctr images import /tmp/postgres.tar
+	docker exec desktop-control-plane rm /tmp/postgres.tar
+	rm -f postgres.tar
 	@echo "✓ Infra images loaded into k8s node"
 
 build: ## Build all Docker images
@@ -52,23 +61,30 @@ build-minikube: ## Build images in minikube Docker daemon
 	docker build -t devops-agent/dashboard:latest  ./dashboard
 	@echo "✓ All images built (minikube)"
 
-build-ml: ## Build ML model server image
-ifdef MINIKUBE
-	eval $$(minikube docker-env) && \
+build-ml: ## Build ML model server image (Docker Desktop)
 	docker build -t devops-agent/ml-server:latest -f ml-models/serving/Dockerfile ./ml-models
-else
-	docker build -t devops-agent/ml-server:latest -f ml-models/serving/Dockerfile ./ml-models
-endif
-	@echo "✓ ML server image built"
+	docker save devops-agent/ml-server:latest -o ml-server.tar
+	docker cp ml-server.tar desktop-control-plane:/tmp/ml-server.tar
+	docker exec desktop-control-plane ctr images import /tmp/ml-server.tar
+	docker exec desktop-control-plane rm /tmp/ml-server.tar
+	rm -f ml-server.tar
+	@echo "✓ ML server image built and loaded into k8s node"
 
 # ── Deploy ───────────────────────────────────────────────────
 .PHONY: deploy deploy-ml deploy-infra deploy-apps switch-claude switch-ml
 
-check-secrets: ## Verify devops-secrets exists before deploying
-	kubectl get secret devops-secrets -n $(NAMESPACE) -o name
+create-secrets: ## Create or refresh devops-secrets from .env file
+	kubectl create secret generic devops-secrets \
+	  --namespace $(NAMESPACE) \
+	  --from-literal=ANTHROPIC_API_KEY=$(ANTHROPIC_API_KEY) \
+	  --from-literal=POSTGRES_PASSWORD=$(POSTGRES_PASSWORD) \
+	  --from-literal=POSTGRES_USER=$(POSTGRES_USER) \
+	  --from-literal=REDIS_PASSWORD=$(REDIS_PASSWORD) \
+	  --dry-run=client -o yaml | kubectl apply -f -
 
-deploy-infra: check-secrets ## Deploy infrastructure (Redis, Postgres, VictoriaMetrics)
+deploy-infra: ## Deploy infrastructure (Redis, Postgres, VictoriaMetrics)
 	kubectl apply -f k8s/01-namespace-rbac.yaml
+	$(MAKE) create-secrets
 	kubectl apply -f k8s/02-redis-pubsub.yaml
 	kubectl apply -f k8s/03-postgres.yaml
 	kubectl apply -f k8s/03a-victoriametrics.yaml
@@ -135,10 +151,10 @@ collect-retrain: ## Collect real data and retrain models
 .PHONY: status logs-agent logs-collector logs-backend logs-ml dashboard port-forward
 
 status: ## Show all pods and services
-	@echo "── Pods ──"
+	@echo " Pods"
 	@kubectl get pods -n $(NAMESPACE) -o wide
 	@echo ""
-	@echo "── Services ──"
+	@echo "Services"
 	@kubectl get svc -n $(NAMESPACE)
 
 logs-agent: ## Stream agent logs
@@ -170,9 +186,9 @@ ml-server: ## Port-forward ML server (http://localhost:8001)
 
 clean: ## Tear down all resources
 	kubectl delete namespace $(NAMESPACE) --ignore-not-found
-	@echo "✓ Namespace $(NAMESPACE) deleted"
+	@echo "Namespace $(NAMESPACE) deleted"
 
 clean-ml: ## Remove ML server only
 	kubectl delete -f k8s/08-ml-server.yaml --ignore-not-found
 	kubectl set env deploy/devops-ai-agent -n $(NAMESPACE) ANALYZER_MODE=claude
-	@echo "✓ ML server removed, switched to Claude mode"
+	@echo "ML server removed, switched to Claude mode"

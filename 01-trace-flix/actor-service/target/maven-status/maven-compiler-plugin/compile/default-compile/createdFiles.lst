@@ -1,0 +1,7 @@
+com\vinsguru\actor\ActorServiceApplication.class
+com\vinsguru\actor\repository\ActorRepository.class
+com\vinsguru\actor\controller\ActorController.class
+com\vinsguru\actor\mapper\EntityDtoMapper.class
+com\vinsguru\actor\dto\ActorDto.class
+com\vinsguru\actor\entity\Actor.class
+com\vinsguru\actor\service\ActorService.class
