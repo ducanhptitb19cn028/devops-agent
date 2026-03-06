@@ -394,3 +394,8 @@ Each series is analysed for direction (increasing / stable / decreasing), percen
 
   # 3. Force a new pod so it picks up the now-local image
   kubectl delete pod -l app=devops-ml-server -n devops-agent
+
+  build services
+  docker build -t movie-service:latest ./movie-service
+docker build -t actor-service:latest ./actor-service
+docker build -t review-service:latest ./review-service

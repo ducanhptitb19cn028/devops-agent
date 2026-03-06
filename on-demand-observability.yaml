@@ -636,9 +636,9 @@ spec:
               mountPath: /otel
           env:
             - name: ACTOR_SERVICE_URL
-              value: http://actor-service:8080
+              value: http://actor-service:8080/api/actors/
             - name: REVIEW_SERVICE_URL
-              value: http://review-service:8080
+              value: http://review-service:8080/api/reviews
             - name: JAVA_TOOL_OPTIONS
               value: "-javaagent:/otel/opentelemetry-javaagent.jar"
             - name: OTEL_SERVICE_NAME
