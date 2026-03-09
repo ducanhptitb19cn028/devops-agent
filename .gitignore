@@ -1,3 +1,6 @@
+# Spring Boot / Maven
+01-trace-flix/*/target/
+
 # Python
 __pycache__/
 *.py[cod]

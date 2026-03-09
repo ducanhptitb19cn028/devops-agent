@@ -366,7 +366,7 @@ class AnomalyDetector:
             torch.save(self.lstm_ae.state_dict(), path / "lstm_autoencoder.pt")
         joblib.dump(self.scaler, path / "scaler.joblib")
         meta = {
-            "reconstruction_threshold": self.reconstruction_threshold,
+            "reconstruction_threshold": float(self.reconstruction_threshold),
             "ensemble_weights": cfg.ensemble_weights,
             "seq_length": cfg.lstm_seq_length,
             "features": METRIC_FEATURES,

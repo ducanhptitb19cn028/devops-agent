@@ -170,8 +170,8 @@ logs-ml: ## Stream ML server logs
 	kubectl logs -f deploy/devops-ml-server -n $(NAMESPACE)
 
 dashboard: ## Port-forward dashboard (http://localhost:3000)
-	@echo "Dashboard: http://localhost:3000"
-	kubectl port-forward svc/devops-dashboard -n $(NAMESPACE) 3000:3000
+	@echo "Dashboard: http://localhost:3001"
+	kubectl port-forward svc/devops-dashboard -n $(NAMESPACE) 3001:3000
 
 port-forward: ## Port-forward backend API (http://localhost:8000)
 	@echo "Backend API: http://localhost:8000"
