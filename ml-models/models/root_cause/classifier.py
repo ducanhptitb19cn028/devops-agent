@@ -188,8 +188,9 @@ class RootCauseClassifier:
             print("[root_cause] WARNING: Very few anomaly samples, including normal class")
             anomaly_df = feature_df.copy()
 
-        # Encode labels
-        self.label_encoder.fit(ROOT_CAUSE_LABELS)
+        # Encode labels — fit only on labels present in training data so XGBoost
+        # receives contiguous integers [0, 1, ..., n_classes-1]
+        self.label_encoder.fit(sorted(anomaly_df["label"].unique()))
         y = self.label_encoder.transform(anomaly_df["label"].values)
         X = anomaly_df[self.feature_engineer.feature_names].fillna(0).values
 
@@ -224,7 +225,6 @@ class RootCauseClassifier:
             reg_alpha=cfg.reg_alpha,
             reg_lambda=cfg.reg_lambda,
             random_state=cfg.random_state,
-            use_label_encoder=False,
             eval_metric="mlogloss",
             tree_method="hist",      # fast for GPU too
             n_jobs=-1,
@@ -359,7 +359,7 @@ class RootCauseClassifier:
         joblib.dump(self.label_encoder, path / "label_encoder.joblib")
         joblib.dump(self.feature_engineer, path / "feature_engineer.joblib")
         with open(path / "feature_importance.json", "w") as f:
-            json.dump(self.feature_importance, f, indent=2)
+            json.dump({k: float(v) for k, v in self.feature_importance.items()}, f, indent=2)
         print(f"[root_cause] Model saved to {path}")
 
     def load(self, path: Path = None):

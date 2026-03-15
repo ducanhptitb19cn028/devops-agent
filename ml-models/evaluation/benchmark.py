@@ -266,8 +266,10 @@ class CostAnalyser:
 
     def compare(self, **kwargs) -> Dict:
         """Full cost comparison."""
+        import inspect
         api = self.estimate_api_cost(**kwargs)
-        ml = self.estimate_ml_cost(**kwargs)
+        ml_params = inspect.signature(self.estimate_ml_cost).parameters
+        ml = self.estimate_ml_cost(**{k: v for k, v in kwargs.items() if k in ml_params})
         savings = api["monthly_total_cost_usd"] - ml["monthly_cost_usd"]
         savings_pct = (savings / api["monthly_total_cost_usd"]) * 100 if api["monthly_total_cost_usd"] > 0 else 0
 

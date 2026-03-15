@@ -325,7 +325,8 @@ class AnomalyDetector:
                 self.lstm_ae.eval()
                 error = self.lstm_ae.get_reconstruction_error(seq_tensor).item()
                 # Normalize relative to threshold
-                result["lstm_score"] = float(np.clip(error / (self.reconstruction_threshold * 2), 0, 1))
+                denom = self.reconstruction_threshold * 2
+                result["lstm_score"] = float(np.clip(error / denom if denom > 0 else 1.0, 0, 1))
 
         # ── Ensemble ─────────────────────────────────────────
         w = cfg.ensemble_weights
