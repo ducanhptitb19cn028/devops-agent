@@ -161,7 +161,9 @@ ml-models/
 │   └── benchmark.py               # ML vs API comparison framework
 │
 ├── notebooks/
-│   └── research_training.ipynb    # PhD research: training, eval, benchmarks
+│   ├── research_training.ipynb    # PhD research: training, eval, benchmarks
+│   ├── config.py                  # Path shim — re-exports ml-models/config.py for Jupyter
+│   └── fix_session.py             # Kernel-restart helper: reloads models and test splits
 │
 ├── serving/
 │   ├── model_server.py            # FastAPI inference server

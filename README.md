@@ -295,6 +295,11 @@ kubectl set env deploy/devops-ai-agent -n devops-agent ANALYZER_MODE=ml
 
 A Jupyter notebook for training, evaluation, and benchmarking is at `ml-models/notebooks/research_training.ipynb`. It includes per-model metrics, confusion matrices, latency benchmarks, cost analysis, and statistical significance testing (paired t-test, Wilcoxon, bootstrap CIs).
 
+Two helper scripts live alongside the notebook:
+
+- **`notebooks/config.py`** — path shim that re-exports `ml-models/config.py` so cells work regardless of CWD. Use `from config import *` in any cell that needs hyperparameter constants.
+- **`notebooks/fix_session.py`** — run with `%run -i fix_session.py` after a kernel restart to reload the `RootCauseClassifier` and restore test-split variables without re-running all training cells.
+
 ## API Reference
 
 | Method | Endpoint | Description |
@@ -385,17 +390,27 @@ The collector runs the following PromQL range queries against VictoriaMetrics ev
 
 Each series is analysed for direction (increasing / stable / decreasing), percentage change between first and second half of the window, and volatility (coefficient of variation). The `/api/tsdb/trends/summary` endpoint categorises all series into degrading (trend_pct > 10%), stable, or improving, which the AI agent uses to prioritise its analysis.
 
- Run these three commands in order:                                                                                                                               
-  # 1. Build the ML server image                                                                                                                                
-  make build-ml
+## Troubleshooting
 
-  # 2. Load it into the k8s node's containerd (bypasses Docker Hub)
-  docker save devops-agent/ml-server:latest | docker exec -i desktop-control-plane ctr images import -
+### ML Server image not found in Kubernetes (kind/k3d clusters)
 
-  # 3. Force a new pod so it picks up the now-local image
-  kubectl delete pod -l app=devops-ml-server -n devops-agent
+If the ML server pod fails with `ImagePullBackOff` because the image is local-only:
 
-  build services
-  docker build -t movie-service:latest ./movie-service
-docker build -t actor-service:latest ./actor-service
+```bash
+# 1. Build the ML server image
+make build-ml
+
+# 2. Load it into the node's containerd (bypasses Docker Hub)
+docker save devops-agent/ml-server:latest | docker exec -i desktop-control-plane ctr images import -
+
+# 3. Force a new pod so it picks up the now-local image
+kubectl delete pod -l app=devops-ml-server -n devops-agent
+```
+
+### Rebuild TraceFlix services
+
+```bash
+docker build -t movie-service:latest  ./movie-service
+docker build -t actor-service:latest  ./actor-service
 docker build -t review-service:latest ./review-service
+```

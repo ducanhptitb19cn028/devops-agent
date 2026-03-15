@@ -63,6 +63,9 @@ secrets.yml
 kubeconfig
 kubeconfig.*
 
+# Paper / LaTeX
+paper/
+
 # Claude Code session data
 .claude/
 
