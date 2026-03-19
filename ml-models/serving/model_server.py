@@ -118,17 +118,31 @@ def load_models():
     except Exception as e:
         print(f"[serving] ✗ Log clusterer failed: {e}")
 
-    # NLP report generator (load lazily to save VRAM)
-    models["nlp"] = None  # loaded on first /analyse call
-
     if torch.cuda.is_available():
         vram = torch.cuda.memory_allocated() / 1e9
         print(f"[serving] Total VRAM usage: {vram:.1f} GB")
 
 
+def _load_nlp_background():
+    """Load NLP model in a background thread so /analyse never blocks on it."""
+    try:
+        from models.nlp.report_generator import ReportGenerator
+        rg = ReportGenerator()
+        rg.load()
+        models["nlp"] = rg
+        print("[serving] ✓ NLP report generator loaded (background)")
+    except Exception as e:
+        print(f"[serving] ✗ NLP report generator failed: {e}")
+        models["nlp"] = False  # sentinel: tried and failed, use fallback
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import threading
+    models["nlp"] = None  # not loaded yet
     load_models()
+    # Load NLP in background — doesn't block startup or /analyse
+    threading.Thread(target=_load_nlp_background, daemon=True).start()
     yield
     # Cleanup
     if models.get("nlp"):
@@ -276,17 +290,9 @@ async def full_analysis(data: AnalyseRequest) -> Dict[str, Any]:
 
     # Generate NLP report
     t1 = time.perf_counter()
-    if models.get("nlp") is None:
-        # Lazy load NLP model
-        try:
-            from models.nlp.report_generator import ReportGenerator
-            models["nlp"] = ReportGenerator()
-            models["nlp"].load()
-        except Exception as e:
-            print(f"[serving] NLP load failed: {e}, using fallback")
-
-    if models.get("nlp") and hasattr(models["nlp"], "generate_report"):
-        report = models["nlp"].generate_report(
+    nlp = models.get("nlp")
+    if nlp and hasattr(nlp, "generate_report"):
+        report = nlp.generate_report(
             anomaly_results=anomaly_result,
             forecast_results=forecast_result,
             root_cause_results=root_cause_result,
@@ -294,7 +300,7 @@ async def full_analysis(data: AnalyseRequest) -> Dict[str, Any]:
             stats=data.stats,
         )
     else:
-        # Use the fallback directly
+        # NLP still loading or failed — use rule-based fallback (fast)
         from models.nlp.report_generator import ReportGenerator
         rg = ReportGenerator()
         report = rg._fallback_report(
@@ -304,6 +310,8 @@ async def full_analysis(data: AnalyseRequest) -> Dict[str, Any]:
             log_cluster_results=log_cluster_result,
             stats=data.stats,
         )
+        if nlp is None:
+            print("[serving] NLP still loading — used rule-based fallback")
     component_latencies["nlp"] = round((time.perf_counter() - t1) * 1000, 2)
 
     total_latency = (time.perf_counter() - t0) * 1000

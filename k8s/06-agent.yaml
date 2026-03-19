@@ -36,7 +36,7 @@ spec:
             # ── Analyzer mode ─────────────────────────────────
             # Set to "ml" to use local ML models instead of Claude API
             - name: ANALYZER_MODE
-              value: "claude"            # change to "ml" for ML mode
+              value: "ml"               # "claude" for Claude API, "ml" for local ML models
 
             # ── Claude API settings (used when ANALYZER_MODE=claude) ──
             - name: ANTHROPIC_API_KEY
@@ -52,7 +52,7 @@ spec:
             - name: ML_SERVER_URL
               value: http://devops-ml-server.devops-agent.svc.cluster.local:8001
             - name: ML_TIMEOUT
-              value: "30"
+              value: "60"
 
             # ── General settings ──────────────────────────────
             - name: ANALYSIS_INTERVAL

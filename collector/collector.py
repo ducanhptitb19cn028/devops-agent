@@ -157,7 +157,7 @@ class LokiCollector:
     async def _query_service(self, service: str):
         now = datetime.now(timezone.utc)
         since = now - timedelta(seconds=LOGS_INTERVAL + 5)
-        logql = f'{{namespace="{TARGET_NAMESPACE}", app="{service}"}}'
+        logql = f'{{service_name="{service}"}}'
 
         try:
             async with self.session.get(

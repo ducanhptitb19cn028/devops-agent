@@ -1,4 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import {
+  AreaChart, Area, BarChart, Bar, LineChart, Line,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer, Cell, PieChart, Pie,
+} from "recharts";
 
 // Backend URL — override via REACT_APP_BACKEND_URL env var or nginx reverse proxy
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "http://localhost:8000";
@@ -27,23 +32,49 @@ const theme = {
   cyan: "#06b6d4",
 };
 
+const SERVICE_COLORS = {
+  "movie-service":  theme.blue,
+  "actor-service":  theme.cyan,
+  "review-service": theme.purple,
+};
+const SERVICE_LIST = ["movie-service", "actor-service", "review-service"];
+
 const statusColors = {
-  HEALTHY: { bg: "#052e16", border: "#166534", text: "#22c55e", icon: "✓" },
+  HEALTHY:  { bg: "#052e16", border: "#166534", text: "#22c55e", icon: "✓" },
   DEGRADED: { bg: "#451a03", border: "#78350f", text: "#f59e0b", icon: "⚠" },
   CRITICAL: { bg: "#450a0a", border: "#7f1d1d", text: "#ef4444", icon: "✕" },
-  UNKNOWN: { bg: "#1e293b", border: "#334155", text: "#94a3b8", icon: "?" },
+  UNKNOWN:  { bg: "#1e293b", border: "#334155", text: "#94a3b8", icon: "?" },
 };
 
 const severityColors = {
   ERROR: theme.red,
-  WARN: theme.amber,
-  INFO: theme.blue,
+  WARN:  theme.amber,
+  INFO:  theme.blue,
   DEBUG: theme.textDim,
   critical: theme.red,
-  high: "#f97316",
-  medium: theme.amber,
-  low: theme.blue,
+  high:     "#f97316",
+  medium:   theme.amber,
+  low:      theme.blue,
 };
+
+// ── JSONB helpers ─────────────────────────────────────────────
+function parseJsonField(val, fallback) {
+  if (val === null || val === undefined) return fallback;
+  if (typeof val === "string") { try { return JSON.parse(val); } catch { return fallback; } }
+  return val;
+}
+
+function normalizeAnalysis(a) {
+  if (!a) return a;
+  return {
+    ...a,
+    anomalies:          parseJsonField(a.anomalies,          []),
+    root_causes:        parseJsonField(a.root_causes,        []),
+    recommendations:    parseJsonField(a.recommendations,    []),
+    incident_timeline:  parseJsonField(a.incident_timeline,  []),
+    performance:        parseJsonField(a.performance,        {}),
+  };
+}
 
 // ── API helpers ──────────────────────────────────────────────
 async function apiFetch(path, params = {}) {
@@ -56,7 +87,32 @@ async function apiFetch(path, params = {}) {
   return resp.json();
 }
 
-// ── Helper Components ───────────────────────────────────────
+// ── Chart helpers ─────────────────────────────────────────────
+const ChartTooltip = ({ active, payload, label, unit }) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{
+      background: "#1a2332", border: `1px solid ${theme.border}`,
+      borderRadius: 6, padding: "8px 12px", fontSize: 12,
+    }}>
+      <div style={{ color: theme.textMuted, marginBottom: 6, fontSize: 11 }}>{label}</div>
+      {payload.map((p, i) => (
+        <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: p.color, flexShrink: 0 }}></span>
+          <span style={{ color: theme.textMuted }}>{p.name}:</span>
+          <span style={{ color: theme.text, fontFamily: "monospace", fontWeight: 600 }}>
+            {p.value != null ? `${p.value}${unit || ""}` : "—"}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const axisStyle = { fill: theme.textDim, fontSize: 10 };
+const gridProps = { stroke: theme.border, strokeDasharray: "3 3" };
+
+// ── Helper Components ────────────────────────────────────────
 function StatCard({ label, value, subValue, color, icon }) {
   return (
     <div style={{
@@ -84,16 +140,41 @@ function SeverityBadge({ severity }) {
   );
 }
 
-function SectionHeader({ title, count, icon }) {
+function SectionHeader({ title, count, icon, subtitle }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, paddingBottom: 12, borderBottom: `1px solid ${theme.border}` }}>
       {icon && <span style={{ fontSize: 18 }}>{icon}</span>}
-      <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: theme.text }}>{title}</h2>
+      <div>
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: theme.text }}>{title}</h2>
+        {subtitle && <div style={{ fontSize: 11, color: theme.textDim, marginTop: 2 }}>{subtitle}</div>}
+      </div>
       {count !== undefined && (
         <span style={{
           background: theme.blueDim, color: theme.blue, fontSize: 11, fontWeight: 600,
-          padding: "2px 8px", borderRadius: 10, fontFamily: "monospace",
+          padding: "2px 8px", borderRadius: 10, fontFamily: "monospace", marginLeft: "auto",
         }}>{count}</span>
+      )}
+    </div>
+  );
+}
+
+function PanelHeader({ title, icon, badge, badgeColor }) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 10, padding: "14px 20px",
+      borderBottom: `1px solid ${theme.border}`, background: theme.surfaceHover,
+      borderRadius: "8px 8px 0 0",
+    }}>
+      <span style={{ fontSize: 18 }}>{icon}</span>
+      <span style={{ fontSize: 15, fontWeight: 700, color: theme.text }}>{title}</span>
+      {badge && (
+        <span style={{
+          marginLeft: "auto", fontSize: 11, fontWeight: 600, fontFamily: "monospace",
+          padding: "2px 10px", borderRadius: 10,
+          background: (badgeColor || theme.blue) + "20",
+          color: badgeColor || theme.blue,
+          border: `1px solid ${(badgeColor || theme.blue)}40`,
+        }}>{badge}</span>
       )}
     </div>
   );
@@ -137,35 +218,46 @@ function ErrorBanner({ error, onRetry }) {
 
 // ── Main Dashboard ──────────────────────────────────────────
 export default function DevOpsDashboard() {
-  const [tab, setTab] = useState("overview");
-  const [stats, setStats] = useState(null);
-  const [analysis, setAnalysis] = useState(null);
-  const [logs, setLogs] = useState([]);
-  const [traces, setTraces] = useState([]);
-  const [trends, setTrends] = useState(null);
-  const [connected, setConnected] = useState(false);
-  const [lastUpdate, setLastUpdate] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const wsRef = useRef(null);
+  const [tab, setTab]                   = useState("overview");
+  const [stats, setStats]               = useState(null);
+  const [analysis, setAnalysis]         = useState(null);
+  const [logs, setLogs]                 = useState([]);
+  const [traces, setTraces]             = useState([]);
+  const [trends, setTrends]             = useState(null);
+  // Pipeline Monitor data
+  const [trendDetail, setTrendDetail]         = useState([]);
+  const [analysisHistory, setAnalysisHistory] = useState([]);
+  const [metricsRaw, setMetricsRaw]           = useState([]);
+  const [connected, setConnected]       = useState(false);
+  const [lastUpdate, setLastUpdate]     = useState(null);
+  const [loading, setLoading]           = useState(true);
+  const [error, setError]               = useState(null);
+  const wsRef         = useRef(null);
   const retryTimerRef = useRef(null);
 
   // ── Fetch all data from backend API ──────────────────────
   const fetchAll = useCallback(async () => {
     try {
-      const [statsRes, analysisRes, logsRes, tracesRes, trendsRes] = await Promise.all([
+      const [statsRes, analysisRes, logsRes, tracesRes, trendsRes,
+             trendDetailRes, analysisHistRes, metricsRawRes] = await Promise.all([
         apiFetch("/api/stats"),
         apiFetch("/api/analysis/latest").catch(() => null),
-        apiFetch("/api/logs", { since_minutes: 60, limit: 200 }),
+        apiFetch("/api/logs",   { since_minutes: 60, limit: 200 }),
         apiFetch("/api/traces", { since_minutes: 60, limit: 100 }),
         apiFetch("/api/tsdb/trends/summary").catch(() => null),
+        apiFetch("/api/tsdb/trends", { since_hours: 6, limit: 500 }).catch(() => null),
+        apiFetch("/api/analysis",    { limit: 20 }).catch(() => null),
+        apiFetch("/api/metrics",     { since_minutes: 60, limit: 500 }).catch(() => null),
       ]);
 
       setStats(statsRes);
-      if (analysisRes && analysisRes.health_status) setAnalysis(analysisRes);
+      if (analysisRes?.health_status) setAnalysis(normalizeAnalysis(analysisRes));
       setLogs(logsRes.logs || []);
       setTraces(tracesRes.traces || []);
       if (trendsRes) setTrends(trendsRes);
+      if (trendDetailRes?.trends) setTrendDetail(trendDetailRes.trends);
+      if (analysisHistRes?.analyses) setAnalysisHistory(analysisHistRes.analyses.map(normalizeAnalysis));
+      if (metricsRawRes?.metrics) setMetricsRaw(metricsRawRes.metrics);
       setLastUpdate(new Date().toISOString());
       setError(null);
       setLoading(false);
@@ -193,10 +285,7 @@ export default function DevOpsDashboard() {
         ws = new WebSocket(WS_URL);
         wsRef.current = ws;
 
-        ws.onopen = () => {
-          setConnected(true);
-          reconnectDelay = 1000;
-        };
+        ws.onopen = () => { setConnected(true); reconnectDelay = 1000; };
 
         ws.onmessage = (event) => {
           try {
@@ -215,16 +304,11 @@ export default function DevOpsDashboard() {
           }, reconnectDelay);
         };
 
-        ws.onerror = () => {
-          ws.close();
-        };
-      } catch (e) {
-        setConnected(false);
-      }
+        ws.onerror = () => { ws.close(); };
+      } catch (e) { setConnected(false); }
     }
 
     connect();
-
     return () => {
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       if (ws) ws.close();
@@ -234,11 +318,12 @@ export default function DevOpsDashboard() {
   const statusConf = statusColors[analysis?.health_status] || statusColors.UNKNOWN;
 
   const tabs = [
-    { id: "overview", label: "Overview", icon: "◉" },
-    { id: "analysis", label: "AI Analysis", icon: "⬡" },
-    { id: "trends", label: "TSDB Trends", icon: "📈" },
-    { id: "logs", label: "Logs", icon: "≡" },
-    { id: "traces", label: "Traces", icon: "⤳" },
+    { id: "overview", label: "Overview",         icon: "◉" },
+    { id: "pipeline", label: "Pipeline Monitor", icon: "⬡" },
+    { id: "analysis", label: "AI Analysis",      icon: "🤖" },
+    { id: "trends",   label: "TSDB Trends",      icon: "📈" },
+    { id: "logs",     label: "Logs",             icon: "≡" },
+    { id: "traces",   label: "Traces",           icon: "⤳" },
   ];
 
   return (
@@ -300,11 +385,12 @@ export default function DevOpsDashboard() {
           <LoadingSpinner message="Connecting to backend API..." />
         ) : (
           <>
-            {tab === "overview" && <OverviewTab stats={stats} analysis={analysis} statusConf={statusConf} />}
-            {tab === "analysis" && <AnalysisTab analysis={analysis} statusConf={statusConf} />}
-            {tab === "trends" && <TrendsTab trends={trends} />}
-            {tab === "logs" && <LogsTab logs={logs} connected={connected} />}
-            {tab === "traces" && <TracesTab traces={traces} />}
+            {tab === "overview"  && <OverviewTab  stats={stats} analysis={analysis} statusConf={statusConf} />}
+            {tab === "pipeline"  && <PipelineTab  trendDetail={trendDetail} analysisHistory={analysisHistory} metricsRaw={metricsRaw} logs={logs} traces={traces} stats={stats} />}
+            {tab === "analysis"  && <AnalysisTab  analysis={analysis} statusConf={statusConf} />}
+            {tab === "trends"    && <TrendsTab    trends={trends} />}
+            {tab === "logs"      && <LogsTab      logs={logs} connected={connected} />}
+            {tab === "traces"    && <TracesTab    traces={traces} />}
           </>
         )}
       </main>
@@ -318,7 +404,6 @@ function OverviewTab({ stats, analysis, statusConf }) {
 
   return (
     <div>
-      {/* Health banner */}
       {analysis && (
         <div style={{
           background: statusConf.bg, border: `1px solid ${statusConf.border}`,
@@ -341,17 +426,15 @@ function OverviewTab({ stats, analysis, statusConf }) {
         </div>
       )}
 
-      {/* Stat cards */}
       <div style={{ display: "flex", gap: 16, marginBottom: 24, flexWrap: "wrap" }}>
-        <StatCard label="Total Logs" value={stats.total_logs ?? "—"} icon="📝" />
-        <StatCard label="Errors" value={stats.total_errors ?? "—"} color={stats.total_errors > 0 ? theme.red : theme.green} icon="⚠" />
-        <StatCard label="Traces" value={stats.total_traces ?? "—"} icon="⤳" />
-        <StatCard label="Slow Traces" value={stats.slow_traces ?? "—"} color={stats.slow_traces > 0 ? theme.amber : theme.green} icon="🐢" />
-        <StatCard label="K8s Events" value={stats.total_events ?? "—"} icon="☸" />
+        <StatCard label="Total Logs"  value={stats.total_logs   ?? "—"} icon="📝" />
+        <StatCard label="Errors"      value={stats.total_errors ?? "—"} color={stats.total_errors > 0 ? theme.red : theme.green} icon="⚠" />
+        <StatCard label="Traces"      value={stats.total_traces ?? "—"} icon="⤳" />
+        <StatCard label="Slow Traces" value={stats.slow_traces  ?? "—"} color={stats.slow_traces > 0 ? theme.amber : theme.green} icon="🐢" />
+        <StatCard label="K8s Events"  value={stats.total_events ?? "—"} icon="☸" />
       </div>
 
-      {/* Latency by service */}
-      {stats.latency_by_service && stats.latency_by_service.length > 0 && (
+      {stats.latency_by_service?.length > 0 && (
         <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, padding: 20, marginBottom: 20 }}>
           <SectionHeader title="Latency by Service" icon="⏱" />
           <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
@@ -360,12 +443,12 @@ function OverviewTab({ stats, analysis, statusConf }) {
                 <div style={{ fontSize: 13, fontWeight: 600, color: theme.cyan, marginBottom: 6 }}>{s.service}</div>
                 <div style={{ display: "flex", gap: 16 }}>
                   <div>
-                    <div style={{ fontSize: 10, color: theme.textDim }}>P50</div>
-                    <div style={{ fontSize: 15, fontWeight: 600, fontFamily: "monospace" }}>{s.p50_ms ?? "—"}ms</div>
+                    <div style={{ fontSize: 10, color: theme.textDim }}>AVG</div>
+                    <div style={{ fontSize: 15, fontWeight: 600, fontFamily: "monospace" }}>{s.avg_ms ?? "—"}ms</div>
                   </div>
                   <div>
-                    <div style={{ fontSize: 10, color: theme.textDim }}>P99</div>
-                    <div style={{ fontSize: 15, fontWeight: 600, fontFamily: "monospace", color: (s.p99_ms || 0) > 500 ? theme.red : theme.text }}>{s.p99_ms ?? "—"}ms</div>
+                    <div style={{ fontSize: 10, color: theme.textDim }}>MAX</div>
+                    <div style={{ fontSize: 15, fontWeight: 600, fontFamily: "monospace", color: (s.max_ms || 0) > 500 ? theme.red : theme.text }}>{s.max_ms ?? "—"}ms</div>
                   </div>
                 </div>
               </div>
@@ -374,8 +457,7 @@ function OverviewTab({ stats, analysis, statusConf }) {
         </div>
       )}
 
-      {/* Top recommendations */}
-      {analysis?.recommendations && analysis.recommendations.length > 0 && (
+      {analysis?.recommendations?.length > 0 && (
         <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, padding: 20 }}>
           <SectionHeader title="Top Recommendations" count={analysis.recommendations.length} icon="💡" />
           {analysis.recommendations.slice(0, 3).map((r, i) => (
@@ -401,17 +483,648 @@ function OverviewTab({ stats, analysis, statusConf }) {
   );
 }
 
+// ══════════════════════════════════════════════════════════════
+// ── Pipeline Monitor Tab ─────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+
+function PipelineTab({ trendDetail, analysisHistory, metricsRaw, logs, traces, stats }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      <CollectorPanel trendDetail={trendDetail} />
+      <BackendPanel   metricsRaw={metricsRaw} logs={logs} traces={traces} stats={stats} />
+      <AgentPanel     analysisHistory={analysisHistory} />
+    </div>
+  );
+}
+
+// ── Data transforms ──────────────────────────────────────────
+
+function buildTrendTimeSeries(trendDetail, queryName) {
+  const records = (trendDetail || [])
+    .filter(r => r.query_name === queryName)
+    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+  return records.map(r => {
+    const point = {
+      time: new Date(r.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
+    (r.analysis?.series || []).forEach(s => {
+      const svc = s.labels?.service_name || s.labels?.job || "unknown";
+      point[svc] = s.latest != null ? parseFloat(s.latest.toFixed(3)) : null;
+    });
+    return point;
+  });
+}
+
+function buildSeverityData(logs) {
+  const counts = { ERROR: 0, WARN: 0, INFO: 0, DEBUG: 0 };
+  (logs || []).forEach(l => { if (l.severity in counts) counts[l.severity]++; });
+  return [
+    { name: "ERROR", value: counts.ERROR, color: theme.red   },
+    { name: "WARN",  value: counts.WARN,  color: theme.amber },
+    { name: "INFO",  value: counts.INFO,  color: theme.blue  },
+    { name: "DEBUG", value: counts.DEBUG, color: theme.textDim },
+  ];
+}
+
+function buildLatencyData(stats) {
+  return (stats?.latency_by_service || []).map(s => ({
+    service:  (s.service || "").replace("-service", ""),
+    "Avg ms": parseFloat((s.avg_ms || 0).toFixed(1)),
+    "Max ms": parseFloat((s.max_ms || 0).toFixed(1)),
+  }));
+}
+
+function buildDurationBuckets(traces) {
+  const buckets = [
+    { name: "0–100",    min: 0,    max: 100,      count: 0 },
+    { name: "100–500",  min: 100,  max: 500,      count: 0 },
+    { name: "500–1k",   min: 500,  max: 1000,     count: 0 },
+    { name: "1k–2k",    min: 1000, max: 2000,     count: 0 },
+    { name: ">2k",      min: 2000, max: Infinity,  count: 0 },
+  ];
+  (traces || []).forEach(t => {
+    const d = t.duration_ms || 0;
+    const b = buckets.find(bk => d >= bk.min && d < bk.max);
+    if (b) b.count++;
+  });
+  return buckets.map(({ name, count }) => ({ name, count }));
+}
+
+function buildAgentTimeSeries(analysisHistory) {
+  return (analysisHistory || [])
+    .slice().reverse()
+    .map(a => ({
+      time:       new Date(a.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      confidence: parseFloat(((a.confidence || 0) * 100).toFixed(1)),
+      anomalies:  (a.anomalies || []).length,
+      roots:      (a.root_causes || []).length,
+    }));
+}
+
+function buildHealthTimeline(analysisHistory) {
+  const statusOrder = ["HEALTHY", "DEGRADED", "CRITICAL", "UNKNOWN"];
+  return (analysisHistory || [])
+    .slice().reverse()
+    .map(a => ({
+      time:   new Date(a.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      status: a.health_status || "UNKNOWN",
+      value:  4 - statusOrder.indexOf(a.health_status || "UNKNOWN"),
+      fill:   (statusColors[a.health_status] || statusColors.UNKNOWN).text,
+    }));
+}
+
+// ── Mini chart card ───────────────────────────────────────────
+function ChartCard({ title, subtitle, children, height = 220 }) {
+  return (
+    <div style={{
+      background: theme.surface, border: `1px solid ${theme.border}`,
+      borderRadius: 8, padding: "16px 20px",
+    }}>
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>{title}</div>
+        {subtitle && <div style={{ fontSize: 11, color: theme.textDim, marginTop: 2 }}>{subtitle}</div>}
+      </div>
+      <div style={{ height }}>{children}</div>
+    </div>
+  );
+}
+
+// ── Collector Panel ──────────────────────────────────────────
+function CollectorPanel({ trendDetail }) {
+  const hasData = trendDetail && trendDetail.length > 0;
+
+  const reqRate   = buildTrendTimeSeries(trendDetail, "request_rate_1h");
+  const latP99    = buildTrendTimeSeries(trendDetail, "latency_p99_1h");
+  const errRate   = buildTrendTimeSeries(trendDetail, "error_rate_1h");
+  const jvmHeap   = buildTrendTimeSeries(trendDetail, "jvm_heap_used_1h");
+  const gcPause   = buildTrendTimeSeries(trendDetail, "jvm_gc_pause_1h");
+  const reqRate24 = buildTrendTimeSeries(trendDetail, "request_rate_24h");
+
+  // Latest snapshot summary for bar chart
+  const latestSnap = {};
+  (trendDetail || []).forEach(r => {
+    const ts = r.timestamp;
+    if (!latestSnap[r.query_name] || ts > latestSnap[r.query_name].timestamp) {
+      latestSnap[r.query_name] = r;
+    }
+  });
+  const currentValues = Object.entries(latestSnap).flatMap(([qn, r]) =>
+    (r.analysis?.series || []).map(s => ({
+      metric:    qn.replace(/_1h|_24h/, "").replace(/_/g, " "),
+      service:   (s.labels?.service_name || s.labels?.job || "?").replace("-service", ""),
+      latest:    s.latest,
+      avg:       s.avg,
+      trend_pct: s.trend_pct,
+      direction: s.direction,
+    }))
+  );
+
+  const formatBytes = v => v != null ? `${(v / 1024 / 1024).toFixed(0)}MB` : "—";
+  const formatMs    = v => v != null ? `${v.toFixed(1)}ms` : "—";
+  const formatRate  = v => v != null ? v.toFixed(3) : "—";
+
+  return (
+    <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8 }}>
+      <PanelHeader
+        title="VictoriaMetrics Collector"
+        icon="📊"
+        badge={hasData ? `${trendDetail.length} records · 6h window` : "No data"}
+        badgeColor={hasData ? theme.cyan : theme.amber}
+      />
+      <div style={{ padding: 20 }}>
+        {!hasData ? (
+          <LoadingSpinner message="Waiting for TSDB trend data..." />
+        ) : (
+          <>
+            {/* Service legend */}
+            <div style={{ display: "flex", gap: 20, marginBottom: 20, flexWrap: "wrap" }}>
+              {SERVICE_LIST.map(svc => (
+                <div key={svc} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{ width: 10, height: 10, borderRadius: 2, background: SERVICE_COLORS[svc] }}></div>
+                  <span style={{ fontSize: 12, color: theme.textMuted }}>{svc}</span>
+                </div>
+              ))}
+              <span style={{ marginLeft: "auto", fontSize: 11, color: theme.textDim }}>Collected every 60s via PromQL range queries</span>
+            </div>
+
+            {/* 2×3 chart grid */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16, marginBottom: 20 }}>
+
+              <ChartCard title="Request Rate (req/s)" subtitle="request_rate_1h — per service">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={reqRate} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
+                    <defs>
+                      {SERVICE_LIST.map(svc => (
+                        <linearGradient key={svc} id={`g-${svc}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%"  stopColor={SERVICE_COLORS[svc]} stopOpacity={0.3} />
+                          <stop offset="95%" stopColor={SERVICE_COLORS[svc]} stopOpacity={0} />
+                        </linearGradient>
+                      ))}
+                    </defs>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="time" tick={axisStyle} tickLine={false} />
+                    <YAxis tick={axisStyle} tickLine={false} axisLine={false} />
+                    <Tooltip content={<ChartTooltip />} />
+                    {SERVICE_LIST.map(svc => (
+                      <Area key={svc} type="monotone" dataKey={svc} stroke={SERVICE_COLORS[svc]}
+                        fill={`url(#g-${svc})`} strokeWidth={2} dot={false} connectNulls />
+                    ))}
+                  </AreaChart>
+                </ResponsiveContainer>
+              </ChartCard>
+
+              <ChartCard title="P99 Latency (ms)" subtitle="latency_p99_1h — per service">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={latP99} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="time" tick={axisStyle} tickLine={false} />
+                    <YAxis tick={axisStyle} tickLine={false} axisLine={false} />
+                    <Tooltip content={<ChartTooltip unit="ms" />} />
+                    {SERVICE_LIST.map(svc => (
+                      <Line key={svc} type="monotone" dataKey={svc} stroke={SERVICE_COLORS[svc]}
+                        strokeWidth={2} dot={false} connectNulls />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </ChartCard>
+
+              <ChartCard title="Error Rate" subtitle="error_rate_1h — 5xx errors per service">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={errRate} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
+                    <defs>
+                      {SERVICE_LIST.map(svc => (
+                        <linearGradient key={svc} id={`ge-${svc}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%"  stopColor={SERVICE_COLORS[svc]} stopOpacity={0.25} />
+                          <stop offset="95%" stopColor={SERVICE_COLORS[svc]} stopOpacity={0} />
+                        </linearGradient>
+                      ))}
+                    </defs>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="time" tick={axisStyle} tickLine={false} />
+                    <YAxis tick={axisStyle} tickLine={false} axisLine={false} />
+                    <Tooltip content={<ChartTooltip />} />
+                    {SERVICE_LIST.map(svc => (
+                      <Area key={svc} type="monotone" dataKey={svc} stroke={SERVICE_COLORS[svc]}
+                        fill={`url(#ge-${svc})`} strokeWidth={2} dot={false} connectNulls />
+                    ))}
+                  </AreaChart>
+                </ResponsiveContainer>
+              </ChartCard>
+
+              <ChartCard title="JVM Heap Used (MB)" subtitle="jvm_heap_used_1h — memory leak detection">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={jvmHeap} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
+                    <defs>
+                      {SERVICE_LIST.map(svc => (
+                        <linearGradient key={svc} id={`gh-${svc}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%"  stopColor={SERVICE_COLORS[svc]} stopOpacity={0.3} />
+                          <stop offset="95%" stopColor={SERVICE_COLORS[svc]} stopOpacity={0} />
+                        </linearGradient>
+                      ))}
+                    </defs>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="time" tick={axisStyle} tickLine={false} />
+                    <YAxis tick={axisStyle} tickLine={false} axisLine={false}
+                      tickFormatter={v => `${(v / 1048576).toFixed(0)}MB`} />
+                    <Tooltip content={<ChartTooltip formatter={formatBytes} />} />
+                    {SERVICE_LIST.map(svc => (
+                      <Area key={svc} type="monotone" dataKey={svc} stroke={SERVICE_COLORS[svc]}
+                        fill={`url(#gh-${svc})`} strokeWidth={2} dot={false} connectNulls />
+                    ))}
+                  </AreaChart>
+                </ResponsiveContainer>
+              </ChartCard>
+
+              <ChartCard title="JVM GC Pause Rate" subtitle="jvm_gc_pause_1h — GC pressure">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={gcPause} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="time" tick={axisStyle} tickLine={false} />
+                    <YAxis tick={axisStyle} tickLine={false} axisLine={false} />
+                    <Tooltip content={<ChartTooltip unit="s" />} />
+                    {SERVICE_LIST.map(svc => (
+                      <Line key={svc} type="monotone" dataKey={svc} stroke={SERVICE_COLORS[svc]}
+                        strokeWidth={2} dot={false} connectNulls />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </ChartCard>
+
+              <ChartCard title="Request Rate — 24h Pattern" subtitle="request_rate_24h · step 15m">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={reqRate24} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
+                    <defs>
+                      {SERVICE_LIST.map(svc => (
+                        <linearGradient key={svc} id={`g24-${svc}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%"  stopColor={SERVICE_COLORS[svc]} stopOpacity={0.3} />
+                          <stop offset="95%" stopColor={SERVICE_COLORS[svc]} stopOpacity={0} />
+                        </linearGradient>
+                      ))}
+                    </defs>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="time" tick={axisStyle} tickLine={false} />
+                    <YAxis tick={axisStyle} tickLine={false} axisLine={false} />
+                    <Tooltip content={<ChartTooltip />} />
+                    {SERVICE_LIST.map(svc => (
+                      <Area key={svc} type="monotone" dataKey={svc} stroke={SERVICE_COLORS[svc]}
+                        fill={`url(#g24-${svc})`} strokeWidth={2} dot={false} connectNulls />
+                    ))}
+                  </AreaChart>
+                </ResponsiveContainer>
+              </ChartCard>
+            </div>
+
+            {/* Current values table */}
+            {currentValues.length > 0 && (
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: theme.textMuted, marginBottom: 10 }}>Current Snapshot</div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ background: theme.surfaceHover }}>
+                        {["Metric", "Service", "Latest", "Avg", "Trend %", "Direction"].map(h => (
+                          <th key={h} style={{
+                            padding: "8px 12px", textAlign: "left", fontWeight: 600,
+                            color: theme.textDim, fontSize: 11, textTransform: "uppercase",
+                            letterSpacing: "0.04em", borderBottom: `1px solid ${theme.border}`,
+                          }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {currentValues.map((row, i) => (
+                        <tr key={i} style={{ borderBottom: `1px solid ${theme.border}` }}>
+                          <td style={{ padding: "7px 12px", color: theme.textMuted, fontFamily: "monospace", fontSize: 11 }}>{row.metric}</td>
+                          <td style={{ padding: "7px 12px", color: SERVICE_COLORS[row.service + "-service"] || theme.cyan, fontWeight: 600 }}>{row.service}</td>
+                          <td style={{ padding: "7px 12px", fontFamily: "monospace", color: theme.text }}>{row.latest?.toFixed(3) ?? "—"}</td>
+                          <td style={{ padding: "7px 12px", fontFamily: "monospace", color: theme.textMuted }}>{row.avg?.toFixed(3) ?? "—"}</td>
+                          <td style={{ padding: "7px 12px", fontFamily: "monospace", color: (row.trend_pct || 0) > 5 ? theme.red : (row.trend_pct || 0) < -5 ? theme.green : theme.textMuted }}>
+                            {row.trend_pct != null ? `${row.trend_pct > 0 ? "+" : ""}${row.trend_pct.toFixed(1)}%` : "—"}
+                          </td>
+                          <td style={{ padding: "7px 12px" }}>
+                            <span style={{
+                              fontSize: 11, fontWeight: 600,
+                              color: row.direction === "increasing" ? theme.red : row.direction === "decreasing" ? theme.green : theme.textMuted,
+                            }}>
+                              {row.direction === "increasing" ? "▲ " : row.direction === "decreasing" ? "▼ " : "— "}
+                              {row.direction || "stable"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Backend Panel ─────────────────────────────────────────────
+function BackendPanel({ metricsRaw, logs, traces, stats }) {
+  const severityData = buildSeverityData(logs);
+  const latencyData  = buildLatencyData(stats);
+  const durationData = buildDurationBuckets(traces);
+
+  const totalLogs    = (logs   || []).length;
+  const totalMetrics = (metricsRaw || []).length;
+  const totalTraces  = (traces || []).length;
+  const slowCount    = (traces || []).filter(t => t.is_slow).length;
+  const errorCount   = (logs   || []).filter(l => l.severity === "ERROR").length;
+
+  return (
+    <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8 }}>
+      <PanelHeader
+        title="Backend API & Data Ingestion"
+        icon="🗄"
+        badge="Last 60 min"
+        badgeColor={theme.blue}
+      />
+      <div style={{ padding: 20 }}>
+
+        {/* Ingestion stat cards */}
+        <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
+          <StatCard label="Logs Ingested"    value={totalLogs}    icon="📝" subValue="last 60 min" />
+          <StatCard label="Metrics Ingested" value={totalMetrics} icon="📊" subValue="last 60 min" />
+          <StatCard label="Traces Ingested"  value={totalTraces}  icon="⤳" subValue="last 60 min" />
+          <StatCard label="Slow Traces"      value={slowCount}    icon="🐢" color={slowCount  > 0 ? theme.amber : theme.green} subValue=">500ms" />
+          <StatCard label="Error Logs"       value={errorCount}   icon="⚠"  color={errorCount > 0 ? theme.red   : theme.green} subValue="severity=ERROR" />
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+
+          {/* Log Severity Breakdown */}
+          <ChartCard title="Log Severity Breakdown" subtitle={`${totalLogs} log entries`} height={240}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={severityData} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 10 }}>
+                <CartesianGrid {...gridProps} horizontal={false} />
+                <XAxis type="number" tick={axisStyle} tickLine={false} axisLine={false} />
+                <YAxis type="category" dataKey="name" tick={{ ...axisStyle, fontSize: 11, fontFamily: "monospace" }} tickLine={false} axisLine={false} width={44} />
+                <Tooltip content={<ChartTooltip />} />
+                <Bar dataKey="value" radius={[0, 4, 4, 0]} label={{ position: "right", fill: theme.textMuted, fontSize: 11 }}>
+                  {severityData.map((entry, i) => (
+                    <Cell key={i} fill={entry.color} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          {/* Service Latency Comparison */}
+          <ChartCard title="Service Latency" subtitle="avg vs max (ms)" height={240}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={latencyData} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
+                <CartesianGrid {...gridProps} />
+                <XAxis dataKey="service" tick={axisStyle} tickLine={false} />
+                <YAxis tick={axisStyle} tickLine={false} axisLine={false} />
+                <Tooltip content={<ChartTooltip unit="ms" />} />
+                <Legend wrapperStyle={{ fontSize: 11, color: theme.textMuted }} />
+                <Bar dataKey="Avg ms" fill={theme.blue}  radius={[3, 3, 0, 0]} />
+                <Bar dataKey="Max ms" fill={theme.amber} radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          {/* Trace Duration Distribution */}
+          <ChartCard title="Trace Duration Distribution" subtitle="histogram (ms buckets)" height={240}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={durationData} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
+                <CartesianGrid {...gridProps} />
+                <XAxis dataKey="name" tick={axisStyle} tickLine={false} />
+                <YAxis tick={axisStyle} tickLine={false} axisLine={false} />
+                <Tooltip content={<ChartTooltip />} />
+                <Bar dataKey="count" radius={[3, 3, 0, 0]} label={{ position: "top", fill: theme.textMuted, fontSize: 10 }}>
+                  {durationData.map((entry, i) => (
+                    <Cell key={i} fill={i < 2 ? theme.green : i === 2 ? theme.amber : theme.red} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+        </div>
+
+        {/* Metrics ingested by name */}
+        {metricsRaw && metricsRaw.length > 0 && (() => {
+          const bySvc = {};
+          metricsRaw.forEach(m => {
+            const svc = m.labels?.service_name || m.labels?.job || "other";
+            bySvc[svc] = (bySvc[svc] || 0) + 1;
+          });
+          const data = Object.entries(bySvc).map(([name, count]) => ({ name: name.replace("-service",""), count }));
+          return (
+            <div style={{ marginTop: 16 }}>
+              <ChartCard title="Metrics Ingested by Service" subtitle="count of metric records" height={180}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={data} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="name" tick={axisStyle} tickLine={false} />
+                    <YAxis tick={axisStyle} tickLine={false} axisLine={false} />
+                    <Tooltip content={<ChartTooltip />} />
+                    <Bar dataKey="count" radius={[3, 3, 0, 0]}>
+                      {data.map((_, i) => (
+                        <Cell key={i} fill={[theme.blue, theme.cyan, theme.purple, theme.green][i % 4]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartCard>
+            </div>
+          );
+        })()}
+      </div>
+    </div>
+  );
+}
+
+// ── Agent Panel ───────────────────────────────────────────────
+function AgentPanel({ analysisHistory }) {
+  const hasData    = analysisHistory && analysisHistory.length > 0;
+  const agentSeries = buildAgentTimeSeries(analysisHistory);
+  const healthLine  = buildHealthTimeline(analysisHistory);
+
+  const latestHealth = analysisHistory?.[0];
+  const healthConf   = statusColors[latestHealth?.health_status] || statusColors.UNKNOWN;
+
+  // Anomaly severity distribution across all analyses
+  const sevCounts = { critical: 0, high: 0, medium: 0, low: 0 };
+  (analysisHistory || []).forEach(a => {
+    (a.anomalies || []).forEach(anom => {
+      if (anom.severity in sevCounts) sevCounts[anom.severity]++;
+    });
+  });
+  const sevData = Object.entries(sevCounts)
+    .map(([name, value]) => ({ name, value, color: severityColors[name] || theme.textMuted }))
+    .filter(d => d.value > 0);
+
+  // Recommendation priority breakdown
+  const priCounts = { immediate: 0, short_term: 0, long_term: 0 };
+  (analysisHistory || []).forEach(a => {
+    (a.recommendations || []).forEach(r => {
+      if (r.priority in priCounts) priCounts[r.priority]++;
+    });
+  });
+  const priData = [
+    { name: "Immediate",   value: priCounts.immediate,  color: theme.red   },
+    { name: "Short-term",  value: priCounts.short_term, color: theme.amber },
+    { name: "Long-term",   value: priCounts.long_term,  color: theme.blue  },
+  ].filter(d => d.value > 0);
+
+  return (
+    <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8 }}>
+      <PanelHeader
+        title="AI Agent Analysis"
+        icon="🤖"
+        badge={hasData ? `${analysisHistory.length} analysis cycles` : "No data"}
+        badgeColor={hasData ? healthConf.text : theme.amber}
+      />
+      <div style={{ padding: 20 }}>
+        {!hasData ? (
+          <LoadingSpinner message="Waiting for AI analysis data..." />
+        ) : (
+          <>
+            {/* Current health status */}
+            {latestHealth && (
+              <div style={{
+                background: healthConf.bg, border: `1px solid ${healthConf.border}`,
+                borderRadius: 8, padding: "14px 18px", marginBottom: 20,
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <span style={{ fontSize: 22 }}>{healthConf.icon}</span>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: healthConf.text }}>{latestHealth.health_status}</div>
+                    <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 2 }}>{latestHealth.summary}</div>
+                  </div>
+                </div>
+                <div style={{ textAlign: "right", fontFamily: "monospace" }}>
+                  <div style={{ fontSize: 11, color: theme.textDim }}>Confidence</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: healthConf.text }}>
+                    {((latestHealth.confidence || 0) * 100).toFixed(0)}%
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 16 }}>
+
+              {/* Confidence + Anomalies over time */}
+              <ChartCard title="Confidence & Anomaly Count Over Time" subtitle={`${agentSeries.length} analysis cycles`} height={240}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={agentSeries} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="time" tick={axisStyle} tickLine={false} />
+                    <YAxis yAxisId="conf" tick={axisStyle} tickLine={false} axisLine={false} domain={[0, 100]} tickFormatter={v => `${v}%`} />
+                    <YAxis yAxisId="anom" orientation="right" tick={axisStyle} tickLine={false} axisLine={false} />
+                    <Tooltip content={<ChartTooltip />} />
+                    <Legend wrapperStyle={{ fontSize: 11, color: theme.textMuted }} />
+                    <Line yAxisId="conf" type="monotone" dataKey="confidence" stroke={theme.green}  strokeWidth={2} dot={{ r: 3, fill: theme.green }}  name="Confidence %" />
+                    <Line yAxisId="anom" type="monotone" dataKey="anomalies"  stroke={theme.red}    strokeWidth={2} dot={{ r: 3, fill: theme.red }}    name="Anomalies" />
+                    <Line yAxisId="anom" type="monotone" dataKey="roots"      stroke={theme.amber}  strokeWidth={2} dot={{ r: 3, fill: theme.amber }}  name="Root Causes" strokeDasharray="4 2" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </ChartCard>
+
+              {/* Anomaly severity pie */}
+              <ChartCard title="Anomaly Severity" subtitle="all cycles combined" height={240}>
+                {sevData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={sevData} dataKey="value" nameKey="name" cx="50%" cy="45%"
+                        outerRadius={80} innerRadius={40} paddingAngle={3}
+                        label={({ name, value }) => `${name}: ${value}`}
+                        labelLine={false}
+                      >
+                        {sevData.map((entry, i) => (
+                          <Cell key={i} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip content={<ChartTooltip />} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: theme.green, fontSize: 13 }}>
+                    ✓ No anomalies detected
+                  </div>
+                )}
+              </ChartCard>
+
+              {/* Recommendation priority pie */}
+              <ChartCard title="Recommendation Priority" subtitle="all cycles combined" height={240}>
+                {priData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={priData} dataKey="value" nameKey="name" cx="50%" cy="45%"
+                        outerRadius={80} innerRadius={40} paddingAngle={3}
+                        label={({ name, value }) => `${value}`}
+                        labelLine={false}
+                      >
+                        {priData.map((entry, i) => (
+                          <Cell key={i} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip content={<ChartTooltip />} />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: theme.textDim, fontSize: 13 }}>
+                    No recommendations yet
+                  </div>
+                )}
+              </ChartCard>
+            </div>
+
+            {/* Health Status Timeline */}
+            {healthLine.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <ChartCard title="Health Status Timeline" subtitle="HEALTHY=4 · DEGRADED=3 · CRITICAL=2 · UNKNOWN=1" height={160}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={healthLine} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
+                      <CartesianGrid {...gridProps} />
+                      <XAxis dataKey="time" tick={axisStyle} tickLine={false} />
+                      <YAxis tick={axisStyle} tickLine={false} axisLine={false} domain={[0, 4]}
+                        tickFormatter={v => ["","UNKNOWN","CRITICAL","DEGRADED","HEALTHY"][v] || v} />
+                      <Tooltip
+                        content={({ active, payload, label }) => {
+                          if (!active || !payload?.length) return null;
+                          const d = payload[0]?.payload;
+                          return (
+                            <div style={{ background: "#1a2332", border: `1px solid ${theme.border}`, borderRadius: 6, padding: "8px 12px", fontSize: 12 }}>
+                              <div style={{ color: theme.textMuted, fontSize: 11, marginBottom: 4 }}>{label}</div>
+                              <span style={{ color: d?.fill, fontWeight: 700 }}>{d?.status}</span>
+                            </div>
+                          );
+                        }}
+                      />
+                      <Bar dataKey="value" radius={[3, 3, 0, 0]}>
+                        {healthLine.map((entry, i) => (
+                          <Cell key={i} fill={entry.fill} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </ChartCard>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Analysis Tab ────────────────────────────────────────────
 function AnalysisTab({ analysis, statusConf }) {
   if (!analysis) return <LoadingSpinner message="Waiting for first AI analysis cycle..." />;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      {/* Summary */}
-      <div style={{
-        background: statusConf.bg, border: `1px solid ${statusConf.border}`,
-        borderRadius: 8, padding: 20,
-      }}>
+      <div style={{ background: statusConf.bg, border: `1px solid ${statusConf.border}`, borderRadius: 8, padding: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
           <span style={{ fontSize: 20 }}>{statusConf.icon}</span>
           <span style={{ fontSize: 18, fontWeight: 700, color: statusConf.text }}>{analysis.health_status}</span>
@@ -422,8 +1135,7 @@ function AnalysisTab({ analysis, statusConf }) {
         <p style={{ fontSize: 14, color: theme.text, lineHeight: 1.5, margin: 0 }}>{analysis.summary}</p>
       </div>
 
-      {/* Anomalies */}
-      {analysis.anomalies && analysis.anomalies.length > 0 && (
+      {analysis.anomalies?.length > 0 && (
         <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, padding: 20 }}>
           <SectionHeader title="Anomalies Detected" count={analysis.anomalies.length} icon="🔍" />
           {analysis.anomalies.map((a, i) => (
@@ -434,9 +1146,7 @@ function AnalysisTab({ analysis, statusConf }) {
               </div>
               <p style={{ fontSize: 13, color: theme.textMuted, margin: "0 0 4px", lineHeight: 1.5 }}>{a.detail}</p>
               {a.affected_resources && (
-                <div style={{ fontSize: 11, color: theme.cyan, fontFamily: "monospace" }}>
-                  Affected: {a.affected_resources.join(", ")}
-                </div>
+                <div style={{ fontSize: 11, color: theme.cyan, fontFamily: "monospace" }}>Affected: {a.affected_resources.join(", ")}</div>
               )}
               {a.evidence && <div style={{ fontSize: 11, color: theme.textDim, marginTop: 4, fontStyle: "italic" }}>{a.evidence}</div>}
             </div>
@@ -444,8 +1154,7 @@ function AnalysisTab({ analysis, statusConf }) {
         </div>
       )}
 
-      {/* Root Causes */}
-      {analysis.root_causes && analysis.root_causes.length > 0 && (
+      {analysis.root_causes?.length > 0 && (
         <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, padding: 20 }}>
           <SectionHeader title="Root Cause Analysis" count={analysis.root_causes.length} icon="🎯" />
           {analysis.root_causes.map((rc, i) => (
@@ -462,8 +1171,7 @@ function AnalysisTab({ analysis, statusConf }) {
         </div>
       )}
 
-      {/* Recommendations */}
-      {analysis.recommendations && analysis.recommendations.length > 0 && (
+      {analysis.recommendations?.length > 0 && (
         <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, padding: 20 }}>
           <SectionHeader title="Recommendations" count={analysis.recommendations.length} icon="💡" />
           {analysis.recommendations.map((r, i) => (
@@ -494,8 +1202,7 @@ function AnalysisTab({ analysis, statusConf }) {
         </div>
       )}
 
-      {/* Incident Timeline */}
-      {analysis.incident_timeline && analysis.incident_timeline.length > 0 && (
+      {analysis.incident_timeline?.length > 0 && (
         <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, padding: 20 }}>
           <SectionHeader title="Incident Timeline" count={analysis.incident_timeline.length} icon="🕐" />
           {analysis.incident_timeline.map((ev, i) => (
@@ -520,7 +1227,6 @@ function LogsTab({ logs, connected }) {
 
   return (
     <div>
-      {/* Severity filter bar */}
       <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
         {["ALL", "ERROR", "WARN", "INFO", "DEBUG"].map(sev => (
           <button key={sev} onClick={() => setFilter(sev)} style={{
@@ -536,7 +1242,6 @@ function LogsTab({ logs, connected }) {
         </span>
       </div>
 
-      {/* Log entries */}
       <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, overflow: "hidden" }}>
         {filtered.length === 0 ? (
           <div style={{ padding: 40, textAlign: "center", color: theme.textDim, fontSize: 13 }}>No logs matching filter</div>
@@ -595,7 +1300,7 @@ function TracesTab({ traces }) {
                 }}></div>
               </div>
             </div>
-            <span>{t.is_slow ? "🔶" : "—"}</span>
+            <span>{t.is_slow   ? "🔶" : "—"}</span>
             <span>{t.has_error ? "🔴" : "—"}</span>
           </div>
         ))}
@@ -611,14 +1316,14 @@ function TrendCard({ trend, type }) {
     if (v == null) return "—";
     if (isBytes) return `${(v / 1024 / 1024).toFixed(0)} MB`;
     if (v < 0.01) return v.toFixed(4);
-    if (v < 1) return v.toFixed(3);
+    if (v < 1)    return v.toFixed(3);
     if (v > 1000) return v.toFixed(0);
     return v.toFixed(2);
   };
 
-  const svc = trend.labels?.service_name || trend.labels?.service || "unknown";
+  const svc         = trend.labels?.service_name || trend.labels?.service || "unknown";
   const borderColor = type === "degrading" ? theme.red : type === "improving" ? theme.green : theme.border;
-  const bgTint = type === "degrading" ? theme.redDim + "30" : type === "improving" ? theme.greenDim + "30" : "transparent";
+  const bgTint      = type === "degrading" ? theme.redDim + "30" : type === "improving" ? theme.greenDim + "30" : "transparent";
 
   return (
     <div style={{
@@ -646,32 +1351,17 @@ function TrendCard({ trend, type }) {
         </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-        <div>
-          <div style={{ fontSize: 10, color: theme.textDim, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>Latest</div>
-          <div style={{ fontSize: 16, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: theme.text }}>{formatVal(trend.latest)}</div>
-        </div>
-        <div>
-          <div style={{ fontSize: 10, color: theme.textDim, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>Average</div>
-          <div style={{ fontSize: 16, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: theme.textMuted }}>{formatVal(trend.avg)}</div>
-        </div>
-        <div>
-          <div style={{ fontSize: 10, color: theme.textDim, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>Direction</div>
-          <div style={{
-            fontSize: 13, fontWeight: 600,
-            color: trend.direction === "increasing" ? theme.red : trend.direction === "decreasing" ? theme.green : theme.textMuted,
-          }}>
-            {trend.direction === "increasing" ? "▲" : trend.direction === "decreasing" ? "▼" : "—"} {trend.direction}
+        {[
+          { label: "Latest",    val: formatVal(trend.latest),   color: theme.text    },
+          { label: "Average",   val: formatVal(trend.avg),      color: theme.textMuted },
+          { label: "Direction", val: `${trend.direction === "increasing" ? "▲" : trend.direction === "decreasing" ? "▼" : "—"} ${trend.direction}`, color: trend.direction === "increasing" ? theme.red : trend.direction === "decreasing" ? theme.green : theme.textMuted },
+          { label: "Volatility CV", val: `${(trend.volatility_cv || 0).toFixed(1)}%`, color: (trend.volatility_cv || 0) > 40 ? theme.amber : theme.textMuted },
+        ].map(({ label, val, color }) => (
+          <div key={label}>
+            <div style={{ fontSize: 10, color: theme.textDim, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>{label}</div>
+            <div style={{ fontSize: 15, fontWeight: 700, fontFamily: "monospace", color }}>{val}</div>
           </div>
-        </div>
-        <div>
-          <div style={{ fontSize: 10, color: theme.textDim, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>Volatility</div>
-          <div style={{
-            fontSize: 13, fontWeight: 600, fontFamily: "monospace",
-            color: (trend.volatility_cv || 0) > 40 ? theme.amber : theme.textMuted,
-          }}>
-            CV {(trend.volatility_cv || 0).toFixed(1)}%
-          </div>
-        </div>
+        ))}
       </div>
       <div style={{ marginTop: 10, height: 4, background: theme.bg, borderRadius: 2, overflow: "hidden" }}>
         <div style={{
@@ -688,16 +1378,16 @@ function TrendsTab({ trends }) {
   if (!trends) return <LoadingSpinner message="Waiting for TSDB trend data..." />;
 
   const degrading = trends.degrading || [];
-  const stable = trends.stable || [];
+  const stable    = trends.stable    || [];
   const improving = trends.improving || [];
 
   return (
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
-        <StatCard label="Total Series" value={trends.total_series || 0} icon="📈" color={theme.text} />
-        <StatCard label="Degrading" value={degrading.length} icon="🔴" color={degrading.length > 0 ? theme.red : theme.green} subValue={degrading.length > 0 ? "Requires attention" : "All clear"} />
-        <StatCard label="Stable" value={stable.length} icon="🟢" color={theme.green} />
-        <StatCard label="Improving" value={improving.length} icon="📉" color={theme.cyan} />
+        <StatCard label="Total Series" value={trends.total_series || 0}  icon="📈" color={theme.text} />
+        <StatCard label="Degrading"    value={degrading.length}           icon="🔴" color={degrading.length  > 0 ? theme.red  : theme.green} subValue={degrading.length > 0 ? "Requires attention" : "All clear"} />
+        <StatCard label="Stable"       value={stable.length}              icon="🟢" color={theme.green} />
+        <StatCard label="Improving"    value={improving.length}           icon="📉" color={theme.cyan} />
       </div>
 
       {degrading.length > 0 && (
@@ -735,8 +1425,8 @@ function TrendsTab({ trends }) {
         <span>ℹ</span>
         <span>
           Trend data sourced from <strong style={{ color: theme.text }}>VictoriaMetrics TSDB</strong> via PromQL range queries.
-          Metrics ingested via Prometheus remote_write with 30-day retention and automatic downsampling.
-          Trends update every 60 seconds.
+          Metrics ingested via Prometheus remote_write. Trends update every 60 seconds.
+          For full time-series charts, see the <strong style={{ color: theme.text }}>Pipeline Monitor</strong> tab.
         </span>
       </div>
     </div>

@@ -8,6 +8,9 @@
 #   make deploy-ml     — Deploy with ML model server
 #   make train         — Train ML models
 #   make test-ml       — Run ML smoke tests
+#   make export-excel      — Export ML training results to Excel
+#   make export-traceflix  — Export live TraceFlix data to Excel (last 60 min)
+#   make dashboard-dev     — Run dashboard locally with hot-reload
 #   make status        — Show pod status
 #   make dashboard     — Port-forward dashboard
 #   make clean         — Tear down all resources
@@ -34,24 +37,20 @@ help: ## Show available commands
 load-infra-images: ## Pull and load infra images into Docker Desktop k8s node
 	docker pull redis:7.4-alpine
 	docker pull postgres:16-alpine
-	docker save redis:7.4-alpine    -o redis.tar
-	docker cp redis.tar desktop-control-plane:/tmp/redis.tar
-	docker exec desktop-control-plane ctr images import /tmp/redis.tar
-	docker exec desktop-control-plane rm /tmp/redis.tar
-	rm -f redis.tar
-	docker save postgres:16-alpine  -o postgres.tar
-	docker cp postgres.tar desktop-control-plane:/tmp/postgres.tar
-	docker exec desktop-control-plane ctr images import /tmp/postgres.tar
-	docker exec desktop-control-plane rm /tmp/postgres.tar
-	rm -f postgres.tar
+	docker save redis:7.4-alpine   | docker exec -i desktop-control-plane ctr -n k8s.io images import -
+	docker save postgres:16-alpine | docker exec -i desktop-control-plane ctr -n k8s.io images import -
 	@echo "✓ Infra images loaded into k8s node"
 
-build: ## Build all Docker images
+build: ## Build all Docker images and load into Docker Desktop k8s (k8s.io namespace)
 	docker build -t devops-agent/collector:latest  ./collector
 	docker build -t devops-agent/backend:latest    ./backend
 	docker build -t devops-agent/agent:latest      ./agent
 	docker build -t devops-agent/dashboard:latest  ./dashboard
-	@echo "✓ All images built"
+	docker save devops-agent/collector:latest  | docker exec -i desktop-control-plane ctr -n k8s.io images import -
+	docker save devops-agent/backend:latest    | docker exec -i desktop-control-plane ctr -n k8s.io images import -
+	docker save devops-agent/agent:latest      | docker exec -i desktop-control-plane ctr -n k8s.io images import -
+	docker save devops-agent/dashboard:latest  | docker exec -i desktop-control-plane ctr -n k8s.io images import -
+	@echo "✓ All images built and loaded into k8s node"
 
 build-minikube: ## Build images in minikube Docker daemon
 	eval $$(minikube docker-env) && \
@@ -63,15 +62,25 @@ build-minikube: ## Build images in minikube Docker daemon
 
 build-ml: ## Build ML model server image (Docker Desktop)
 	docker build -t devops-agent/ml-server:latest -f ml-models/serving/Dockerfile ./ml-models
-	docker save devops-agent/ml-server:latest -o ml-server.tar
-	docker cp ml-server.tar desktop-control-plane:/tmp/ml-server.tar
-	docker exec desktop-control-plane ctr images import /tmp/ml-server.tar
-	docker exec desktop-control-plane rm /tmp/ml-server.tar
-	rm -f ml-server.tar
+	docker save devops-agent/ml-server:latest | docker exec -i desktop-control-plane ctr -n k8s.io images import -
 	@echo "✓ ML server image built and loaded into k8s node"
 
 # ── Deploy ───────────────────────────────────────────────────
-.PHONY: deploy deploy-ml deploy-infra deploy-apps switch-claude switch-ml
+.PHONY: deploy deploy-ml deploy-infra deploy-apps switch-claude switch-ml deploy-demo redeploy-demo
+
+deploy-demo: ## Deploy TraceFlix demo (on-demand-observability namespace)
+	kubectl apply -f on-demand-observability.yaml
+	kubectl wait --for=condition=ready pod -l app=otel-collector -n on-demand-observability --timeout=120s
+	kubectl wait --for=condition=ready pod -l app=prometheus -n on-demand-observability --timeout=120s
+	kubectl wait --for=condition=ready pod -l app=loki -n on-demand-observability --timeout=120s
+	@echo "✓ TraceFlix demo deployed (with metrics + logs + load generator)"
+
+redeploy-demo: ## Delete and recreate TraceFlix demo (clean slate for data collection)
+	kubectl delete namespace on-demand-observability --ignore-not-found
+	@echo "Waiting for namespace to terminate..."
+	kubectl wait --for=delete namespace/on-demand-observability --timeout=120s 2>/dev/null || true
+	$(MAKE) deploy-demo
+	@echo "✓ TraceFlix demo redeployed — run 'make collect-data' after 5+ minutes of traffic"
 
 create-secrets: ## Create or refresh devops-secrets from .env file
 	kubectl create secret generic devops-secrets \
@@ -119,6 +128,36 @@ switch-claude: ## Switch agent to Claude API mode
 switch-ml: ## Switch agent to ML model server mode
 	kubectl set env deploy/devops-ai-agent -n $(NAMESPACE) ANALYZER_MODE=ml
 	@echo "✓ Switched to ML model server mode"
+
+# ── Dashboard ────────────────────────────────────────────────
+.PHONY: dashboard-install dashboard-dev dashboard-build
+
+dashboard-install: ## Install dashboard npm dependencies (including recharts)
+	cd dashboard && npm install
+
+dashboard-dev: dashboard-install ## Run dashboard locally with hot-reload (requires make port-forward in another terminal)
+	cd dashboard && npm start
+
+dashboard-build: ## Build dashboard for production
+	cd dashboard && npm run build
+
+# ── Export ───────────────────────────────────────────────────
+.PHONY: export-excel export-excel-data export-traceflix export-traceflix-2h export-traceflix-24h
+
+export-excel: ## Export ML training results and metrics to Excel
+	cd ml-models && python export_to_excel.py
+
+export-excel-data: ## Export ML results + dataset samples to Excel
+	cd ml-models && python export_to_excel.py --include-data
+
+export-traceflix: ## Export live TraceFlix data to Excel (last 60 min)
+	python tools/export_traceflix_data.py --url http://localhost:8000 --since 60
+
+export-traceflix-2h: ## Export live TraceFlix data to Excel (last 2 hours)
+	python tools/export_traceflix_data.py --url http://localhost:8000 --since 120
+
+export-traceflix-24h: ## Export live TraceFlix data to Excel (last 24 hours)
+	python tools/export_traceflix_data.py --url http://localhost:8000 --since 1440
 
 # ── ML Pipeline ──────────────────────────────────────────────
 .PHONY: train train-anomaly train-forecast train-rootcause train-logs test-ml collect-data

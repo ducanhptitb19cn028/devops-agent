@@ -23,6 +23,11 @@ data:
 
     processors:
       batch: {}
+      resource:
+        attributes:
+          - action: insert
+            key: loki.resource.labels
+            value: service.name, service.namespace
 
     exporters:
       otlp/tempo:
@@ -32,6 +37,14 @@ data:
 
       prometheus:
         endpoint: "0.0.0.0:8889"
+        resource_to_telemetry_conversion:
+          enabled: true
+
+      loki:
+        endpoint: http://loki:3100/loki/api/v1/push
+        default_labels_enabled:
+          exporter: false
+          job: true
 
       logging:
         verbosity: normal
@@ -46,6 +59,10 @@ data:
           receivers: [otlp]
           processors: [batch]
           exporters: [prometheus]
+        logs:
+          receivers: [otlp]
+          processors: [batch, resource]
+          exporters: [loki]
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -306,6 +323,15 @@ data:
   prometheus.yml: |
     global:
       scrape_interval: 10s
+      evaluation_interval: 10s
+
+    remote_write:
+      - url: http://victoriametrics.devops-agent.svc.cluster.local:8428/api/v1/write
+        queue_config:
+          max_samples_per_send: 10000
+          batch_send_deadline: 5s
+          max_shards: 3
+
     scrape_configs:
       - job_name: "otel-collector"
         static_configs:
@@ -470,7 +496,7 @@ spec:
             - >
               mkdir -p /otel &&
               curl -L -o /otel/opentelemetry-javaagent.jar
-              https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.8.0/opentelemetry-javaagent.jar
+              https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.12.0/opentelemetry-javaagent.jar
           volumeMounts:
             - name: otel-agent
               mountPath: /otel
@@ -487,6 +513,8 @@ spec:
           env:
             - name: JAVA_TOOL_OPTIONS
               value: "-javaagent:/otel/opentelemetry-javaagent.jar"
+            - name: JDK_JAVA_OPTIONS
+              value: "--add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.lang.reflect=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.util.concurrent=ALL-UNNAMED --add-opens java.base/java.net=ALL-UNNAMED -Djdk.attach.allowAttachSelf=true"
             - name: OTEL_SERVICE_NAME
               value: actor-service
             - name: OTEL_RESOURCE_ATTRIBUTES
@@ -502,9 +530,9 @@ spec:
             - name: OTEL_TRACES_EXPORTER
               value: "otlp"
             - name: OTEL_METRICS_EXPORTER
-              value: "none"
+              value: "otlp"
             - name: OTEL_LOGS_EXPORTER
-              value: "none"
+              value: "otlp"
       volumes:
         - name: otel-agent
           emptyDir: {}
@@ -545,7 +573,7 @@ spec:
             - >
               mkdir -p /otel &&
               curl -L -o /otel/opentelemetry-javaagent.jar
-              https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.8.0/opentelemetry-javaagent.jar
+              https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.12.0/opentelemetry-javaagent.jar
           volumeMounts:
             - name: otel-agent
               mountPath: /otel
@@ -562,6 +590,8 @@ spec:
           env:
             - name: JAVA_TOOL_OPTIONS
               value: "-javaagent:/otel/opentelemetry-javaagent.jar"
+            - name: JDK_JAVA_OPTIONS
+              value: "--add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.lang.reflect=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.util.concurrent=ALL-UNNAMED --add-opens java.base/java.net=ALL-UNNAMED -Djdk.attach.allowAttachSelf=true"
             - name: OTEL_SERVICE_NAME
               value: review-service
             - name: OTEL_RESOURCE_ATTRIBUTES
@@ -577,9 +607,9 @@ spec:
             - name: OTEL_TRACES_EXPORTER
               value: "otlp"
             - name: OTEL_METRICS_EXPORTER
-              value: "none"
+              value: "otlp"
             - name: OTEL_LOGS_EXPORTER
-              value: "none"
+              value: "otlp"
       volumes:
         - name: otel-agent
           emptyDir: {}
@@ -620,7 +650,7 @@ spec:
             - >
               mkdir -p /otel &&
               curl -L -o /otel/opentelemetry-javaagent.jar
-              https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.8.0/opentelemetry-javaagent.jar
+              https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.12.0/opentelemetry-javaagent.jar
           volumeMounts:
             - name: otel-agent
               mountPath: /otel
@@ -641,6 +671,8 @@ spec:
               value: http://review-service:8080/api/reviews
             - name: JAVA_TOOL_OPTIONS
               value: "-javaagent:/otel/opentelemetry-javaagent.jar"
+            - name: JDK_JAVA_OPTIONS
+              value: "--add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.lang.reflect=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.util.concurrent=ALL-UNNAMED --add-opens java.base/java.net=ALL-UNNAMED -Djdk.attach.allowAttachSelf=true"
             - name: OTEL_SERVICE_NAME
               value: movie-service
             - name: OTEL_RESOURCE_ATTRIBUTES
@@ -656,9 +688,9 @@ spec:
             - name: OTEL_TRACES_EXPORTER
               value: "otlp"
             - name: OTEL_METRICS_EXPORTER
-              value: "none"
+              value: "otlp"
             - name: OTEL_LOGS_EXPORTER
-              value: "none"
+              value: "otlp"
       volumes:
         - name: otel-agent
           emptyDir: {}
@@ -675,4 +707,59 @@ spec:
     - name: http
       port: 8080
       targetPort: 8080
-
+---
+# ===========================
+# Load Generator
+# Continuously sends HTTP traffic to TraceFlix services so metrics,
+# logs, and traces are generated for the ML training pipeline.
+# ===========================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-generator
+  namespace: on-demand-observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: load-generator
+  template:
+    metadata:
+      labels:
+        app: load-generator
+    spec:
+      containers:
+        - name: load-generator
+          image: curlimages/curl:8.7.1
+          command: ["sh", "-c"]
+          args:
+            - |
+              echo "Load generator starting..."
+              MOVIES="1 2 3 4 5 6 7 8 9 10"
+              ACTORS="1 2 3 4 5"
+              REVIEWS="1 2 3 4 5 6 7 8"
+              while true; do
+                for id in $MOVIES; do
+                  curl -sf http://movie-service:8080/api/movies/$id >/dev/null 2>&1 || true
+                  sleep 1
+                done
+                for id in $ACTORS; do
+                  curl -sf http://actor-service:8080/api/actors/$id >/dev/null 2>&1 || true
+                  sleep 1
+                done
+                for id in $REVIEWS; do
+                  curl -sf http://review-service:8080/api/reviews/$id >/dev/null 2>&1 || true
+                  sleep 1
+                done
+                curl -sf http://movie-service:8080/api/movies >/dev/null 2>&1 || true
+                curl -sf http://actor-service:8080/api/actors >/dev/null 2>&1 || true
+                curl -sf http://review-service:8080/api/reviews >/dev/null 2>&1 || true
+                sleep 5
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
