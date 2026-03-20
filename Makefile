@@ -10,6 +10,7 @@
 #   make test-ml       — Run ML smoke tests
 #   make export-excel      — Export ML training results to Excel
 #   make export-traceflix  — Export live TraceFlix data to Excel (last 60 min)
+#   make redeploy-dashboard — Rebuild dashboard image and restart pod
 #   make dashboard-dev     — Run dashboard locally with hot-reload
 #   make status        — Show pod status
 #   make dashboard     — Port-forward dashboard
@@ -130,7 +131,7 @@ switch-ml: ## Switch agent to ML model server mode
 	@echo "✓ Switched to ML model server mode"
 
 # ── Dashboard ────────────────────────────────────────────────
-.PHONY: dashboard-install dashboard-dev dashboard-build
+.PHONY: dashboard-install dashboard-dev dashboard-build redeploy-dashboard
 
 dashboard-install: ## Install dashboard npm dependencies (including recharts)
 	cd dashboard && npm install
@@ -140,6 +141,18 @@ dashboard-dev: dashboard-install ## Run dashboard locally with hot-reload (requi
 
 dashboard-build: ## Build dashboard for production
 	cd dashboard && npm run build
+
+redeploy-dashboard: ## Rebuild dashboard image and restart pod (Docker Desktop)
+	docker build -t devops-agent/dashboard:latest ./dashboard
+	docker save devops-agent/dashboard:latest -o dashboard.tar
+	docker cp dashboard.tar desktop-control-plane:/root/dashboard.tar
+	docker exec desktop-control-plane ctr -n k8s.io images import /root/dashboard.tar
+	docker exec desktop-control-plane rm /root/dashboard.tar
+	-rm -f dashboard.tar
+	kubectl apply -f k8s/07-dashboard.yaml
+	kubectl delete pod -l app=devops-dashboard -n $(NAMESPACE) --ignore-not-found
+	kubectl rollout status deployment/devops-dashboard -n $(NAMESPACE) --timeout=60s
+	@echo "✓ Dashboard redeployed — open http://localhost:3001 (run 'make dashboard' first)"
 
 # ── Export ───────────────────────────────────────────────────
 .PHONY: export-excel export-excel-data export-traceflix export-traceflix-2h export-traceflix-24h

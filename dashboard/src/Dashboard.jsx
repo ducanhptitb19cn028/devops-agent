@@ -5,9 +5,12 @@ import {
   ResponsiveContainer, Cell, PieChart, Pie,
 } from "recharts";
 
-// Backend URL — override via REACT_APP_BACKEND_URL env var or nginx reverse proxy
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "http://localhost:8000";
-const WS_URL = BACKEND_URL.replace(/^http/, "ws") + "/ws/live";
+// Backend URL — nginx reverse-proxies /api/* and /ws/* to the backend service.
+// Use an explicit REACT_APP_BACKEND_URL only for local dev (npm start).
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
+const WS_URL = BACKEND_URL
+  ? BACKEND_URL.replace(/^http/, "ws") + "/ws/live"
+  : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws/live`;
 const REFRESH_INTERVAL = 15000; // 15 seconds
 
 // ── Theme ────────────────────────────────────────────────────
@@ -64,21 +67,26 @@ function parseJsonField(val, fallback) {
   return val;
 }
 
+function toArray(val, fallback = []) {
+  const v = parseJsonField(val, fallback);
+  return Array.isArray(v) ? v : fallback;
+}
+
 function normalizeAnalysis(a) {
   if (!a) return a;
   return {
     ...a,
-    anomalies:          parseJsonField(a.anomalies,          []),
-    root_causes:        parseJsonField(a.root_causes,        []),
-    recommendations:    parseJsonField(a.recommendations,    []),
-    incident_timeline:  parseJsonField(a.incident_timeline,  []),
-    performance:        parseJsonField(a.performance,        {}),
+    anomalies:         toArray(a.anomalies),
+    root_causes:       toArray(a.root_causes),
+    recommendations:   toArray(a.recommendations),
+    incident_timeline: toArray(a.incident_timeline),
+    performance:       parseJsonField(a.performance, {}),
   };
 }
 
 // ── API helpers ──────────────────────────────────────────────
 async function apiFetch(path, params = {}) {
-  const url = new URL(`${BACKEND_URL}${path}`);
+  const url = new URL(BACKEND_URL ? `${BACKEND_URL}${path}` : path, window.location.origin);
   Object.entries(params).forEach(([k, v]) => {
     if (v !== undefined && v !== null) url.searchParams.set(k, v);
   });
@@ -251,7 +259,7 @@ export default function DevOpsDashboard() {
       ]);
 
       setStats(statsRes);
-      if (analysisRes?.health_status) setAnalysis(normalizeAnalysis(analysisRes));
+      if (analysisRes) setAnalysis(normalizeAnalysis(analysisRes));
       setLogs(logsRes.logs || []);
       setTraces(tracesRes.traces || []);
       if (trendsRes) setTrends(trendsRes);
@@ -457,7 +465,7 @@ function OverviewTab({ stats, analysis, statusConf }) {
         </div>
       )}
 
-      {analysis?.recommendations?.length > 0 && (
+      {Array.isArray(analysis?.recommendations) && analysis.recommendations.length > 0 && (
         <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, padding: 20 }}>
           <SectionHeader title="Top Recommendations" count={analysis.recommendations.length} icon="💡" />
           {analysis.recommendations.slice(0, 3).map((r, i) => (
@@ -1171,7 +1179,7 @@ function AnalysisTab({ analysis, statusConf }) {
         </div>
       )}
 
-      {analysis.recommendations?.length > 0 && (
+      {Array.isArray(analysis?.recommendations) && analysis.recommendations.length > 0 && (
         <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, padding: 20 }}>
           <SectionHeader title="Recommendations" count={analysis.recommendations.length} icon="💡" />
           {analysis.recommendations.map((r, i) => (
